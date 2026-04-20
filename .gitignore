@@ -1,0 +1,71 @@
+# Build output
+bin/
+obj/
+out/
+build/
+Debug/
+Release/
+x64/
+x86/
+ARM/
+ARM64/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.ncrunchproject
+*.ncrunchsolution
+
+# .NET
+*.dll
+*.exe
+*.pdb
+*.cache
+*.log
+*.tlog
+*.lastbuildstate
+*.unsuccessfulbuild
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+.nuget/
+
+# Rust / C++ misc
+target/
+*.obj
+*.o
+*.lib
+*.a
+*.exp
+*.ilk
+*.ipdb
+*.iobj
+*.res
+*.rc.res
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# User-specific / secrets
+*.local.json
+*.secret
+*.env
+.env
+.env.*
+
+# Claude workspace (local only)
+.claude/
