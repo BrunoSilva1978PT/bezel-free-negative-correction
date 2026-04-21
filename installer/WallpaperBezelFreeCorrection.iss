@@ -16,7 +16,7 @@
 
 #define MyAppName "Wallpaper Bezel Free Correction"
 #define MyAppShortName "WallpaperBezelFreeCorrection"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "BrunoSilva1978PT"
 #define MyAppURL "https://github.com/BrunoSilva1978PT/bezel-free-negative-correction"
 #define MyAppExeName "BezelFreeCorrection.exe"
@@ -80,9 +80,13 @@ Name: "{autodesktop}\{#MyAppName}";             Filename: "{app}\{#MyAppExeName}
 Filename: "{tmp}\{#DotnetRuntimeFile}"; Parameters: "/install /quiet /norestart"; \
     StatusMsg: "Installing .NET 9 Desktop Runtime…"; \
     Check: not IsDotNetRuntimeInstalled; Flags: waituntilterminated
-; Launch the app after install, but not in silent mode.
+; Launch the app after install. postinstall (without skipifsilent)
+; means the entry runs in silent mode too — essential for the in-app
+; auto-update path — while still appearing as a Finish-page checkbox
+; in interactive installs. runasoriginaluser launches the app as the
+; normal user even though Setup itself runs elevated.
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; \
-    Flags: nowait postinstall skipifsilent
+    Flags: nowait postinstall runasoriginaluser
 
 [Code]
 // Check whether .NET 9 Desktop Runtime x64 is present by looking for
