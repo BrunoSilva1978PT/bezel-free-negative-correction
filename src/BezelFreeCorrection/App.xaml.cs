@@ -206,6 +206,15 @@ public partial class App : Application
             var display = topology.Displays[idx];
             var window = new CalibrationWindow(_state!, display);
             window.Show();
+            // Flash Topmost so the fullscreen calibration surface lands
+            // above anything that was already on that monitor (a browser
+            // left open on the centre monitor, a taskbar popup, etc.).
+            // After a brief activation we drop back to non-topmost so
+            // the HUD can still float above when the user interacts with
+            // it.
+            window.Topmost = true;
+            window.Activate();
+            window.Topmost = false;
             _calibrationWindows[idx] = window;
         }
     }
