@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -546,8 +547,10 @@ public partial class HudWindow : Window
     // Brings a gallery entry's settings back into the live state so the
     // user can tweak them and press Apply to regenerate. The saved PNGs
     // themselves are not pushed to the desktop here — that only happens
-    // when Apply is clicked. This matches the usual workflow: pick a
-    // previous calibration, adjust, re-apply.
+    // when Apply is clicked. In Separate mode the saved per-file bounds
+    // are matched back to the current displays so the role assignments
+    // (Left / Centre / Right) snap back too. In Surround there is no
+    // selection to restore — the span is always the single target.
     private void LoadEntryIntoState(GalleryEntry entry)
     {
         try
@@ -559,11 +562,48 @@ public partial class HudWindow : Window
             _state.Right.Overlap = entry.RightOverlap;
             _state.Left.VOffset = entry.LeftVOffset;
             _state.Right.VOffset = entry.RightVOffset;
+
+            if (_state.Topology.Kind == TopologyKind.Separate)
+            {
+                var displays = _state.Topology.Displays;
+                foreach (var file in entry.Files)
+                {
+                    var pos = RoleToPosition(file.Role);
+                    if (pos < 0) continue;
+                    var idx = FindDisplayByBounds(displays,
+                        file.BoundsX, file.BoundsY, file.BoundsWidth, file.BoundsHeight);
+                    if (idx >= 0) _state.AssignMonitor(pos, idx);
+                }
+            }
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message,
                 "Wallpaper Bezel Free Correction", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private static int RoleToPosition(string role) => role?.ToLowerInvariant() switch
+    {
+        "left" => CalibrationState.LeftPosition,
+        "center" => CalibrationState.CenterPosition,
+        "right" => CalibrationState.RightPosition,
+        _ => -1,
+    };
+
+    private static int FindDisplayByBounds(
+        IReadOnlyList<Topology.Display> displays,
+        double x, double y, double w, double h)
+    {
+        for (var i = 0; i < displays.Count; i++)
+        {
+            var b = displays[i].Bounds;
+            if (Math.Abs(b.X - x) < 1 &&
+                Math.Abs(b.Y - y) < 1 &&
+                Math.Abs(b.Width - w) < 1 &&
+                Math.Abs(b.Height - h) < 1)
+                return i;
+        }
+        return -1;
     }
 }
