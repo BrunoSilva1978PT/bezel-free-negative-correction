@@ -4,19 +4,23 @@
 ;   - drops the framework-dependent app into Program Files
 ;   - registers an uninstaller in Add/Remove Programs
 ;   - creates Start Menu + optional Desktop shortcuts
-;   - detects whether .NET 9 Desktop Runtime x64 is present and, if not,
-;     downloads the official installer from Microsoft and runs it
-;     silently before copying app files
+;   - detects whether .NET 9 Desktop Runtime x64 is present and, if
+;     not, runs the BUNDLED runtime installer (no network access at
+;     install time, to avoid Defender's downloader-trojan heuristic)
 ;
 ; Build with:   iscc installer\WallpaperBezelFreeCorrection.iss
-; Output is at: installer\output\WallpaperBezelFreeCorrection-vX.Y.Z.exe
+; Expects:      installer\deps\windowsdesktop-runtime-9.0-win-x64.exe
+;                 (~60 MB, downloaded out-of-band by tooling, not committed)
+;
+; Output:       installer\output\WallpaperBezelFreeCorrection-vX.Y.Z.exe
 
 #define MyAppName "Wallpaper Bezel Free Correction"
 #define MyAppShortName "WallpaperBezelFreeCorrection"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "BrunoSilva1978PT"
 #define MyAppURL "https://github.com/BrunoSilva1978PT/bezel-free-negative-correction"
 #define MyAppExeName "BezelFreeCorrection.exe"
+#define DotnetRuntimeFile "windowsdesktop-runtime-9.0-win-x64.exe"
 
 [Setup]
 AppId={{7B2A6B8C-5D4E-4F1B-9C2E-7F3A1B8C9D0E}
@@ -26,12 +30,17 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
+AppContact={#MyAppURL}
+AppCopyright=Copyright (C) 2026 {#MyAppPublisher}
+AppComments=Generates wallpapers with negative bezel correction for triple-monitor sim rigs.
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=output
 OutputBaseFilename={#MyAppShortName}-v{#MyAppVersion}
-Compression=lzma2/ultra
+; Normal compression instead of ultra — keeps the installer under
+; antivirus heuristics that distrust aggressively packed binaries.
+Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
@@ -42,6 +51,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoDescription={#MyAppName} Setup
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -50,10 +61,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-; Main app binaries — emitted by `dotnet publish --self-contained false`.
+; Main app binary — emitted by `dotnet publish --self-contained false`.
 Source: "..\publish\win-x64\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\publish\win-x64\*.pdb";            DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\README.md";                         DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; Bundled .NET 9 Desktop Runtime x64 installer. Extracted to {tmp} at
+; install time, executed only when the runtime is missing, cleaned up
+; at the end so Program Files stays small.
+Source: "deps\{#DotnetRuntimeFile}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\{#MyAppName}";                   Filename: "{app}\{#MyAppExeName}"
@@ -61,8 +75,8 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}";             Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; Silent install of the downloaded .NET runtime if missing.
-Filename: "{tmp}\dotnet-runtime.exe"; Parameters: "/install /quiet /norestart"; \
+; Silent install of the bundled runtime when missing.
+Filename: "{tmp}\{#DotnetRuntimeFile}"; Parameters: "/install /quiet /norestart"; \
     StatusMsg: "Installing .NET 9 Desktop Runtime…"; \
     Check: not IsDotNetRuntimeInstalled; Flags: waituntilterminated
 ; Launch the app after install, but not in silent mode.
@@ -70,11 +84,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
     Flags: nowait postinstall skipifsilent
 
 [Code]
-var
-  DownloadPage: TDownloadWizardPage;
-
 // Check whether .NET 9 Desktop Runtime x64 is present by looking for
-// any 9.x folder under the shared WindowsDesktop.App directory.
+// any 9.x folder under the shared WindowsDesktop.App directory. No
+// network calls from this script, at install or at compile time.
 function IsDotNetRuntimeInstalled(): Boolean;
 var
   FindRec: TFindRec;
@@ -91,44 +103,6 @@ begin
       finally
         FindClose(FindRec);
       end;
-    end;
-  end;
-end;
-
-procedure InitializeWizard();
-begin
-  DownloadPage := CreateDownloadPage(
-    SetupMessage(msgWizardPreparing),
-    'Fetching .NET 9 Desktop Runtime installer…',
-    nil);
-end;
-
-// After the user confirms installation, if the runtime is missing, we
-// download its installer into {tmp} and let the [Run] section invoke
-// it silently before the app files land in Program Files.
-function NextButtonClick(CurPageID: Integer): Boolean;
-begin
-  Result := True;
-  if (CurPageID = wpReady) and (not IsDotNetRuntimeInstalled()) then
-  begin
-    DownloadPage.Clear;
-    DownloadPage.Add(
-      'https://aka.ms/dotnet/9.0/windowsdesktop-runtime-win-x64.exe',
-      'dotnet-runtime.exe', '');
-    DownloadPage.Show;
-    try
-      try
-        DownloadPage.Download;
-      except
-        if SuppressibleMsgBox(
-             'Could not download the .NET 9 Desktop Runtime: ' + GetExceptionMessage +
-             Chr(13) + Chr(10) +
-             'Install it manually from https://dotnet.microsoft.com/download and retry.',
-             mbCriticalError, MB_OK, IDOK) = IDOK then
-          Result := False;
-      end;
-    finally
-      DownloadPage.Hide;
     end;
   end;
 end;

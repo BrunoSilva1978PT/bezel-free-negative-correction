@@ -76,3 +76,6 @@ third_party/
 # Installer build output (release asset, not tracked)
 installer/output/
 publish/
+
+# Bundled dependency installers — re-downloaded on build, not versioned
+installer/deps/
