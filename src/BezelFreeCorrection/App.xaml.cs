@@ -73,42 +73,10 @@ public partial class App : Application
                 AppInfo.GitHubOwner, AppInfo.GitHubRepo, AppInfo.Version);
             if (info == null) return;
 
-            await Dispatcher.InvokeAsync(async () =>
+            await Dispatcher.InvokeAsync(() =>
             {
-                var owner = _hud ?? (Window)MainWindow;
-                var msg =
-                    $"A new version is available: v{info.Version} " +
-                    $"(you have v{AppInfo.Version}).\n\n" +
-                    "Download and install now?";
-                var answer = MessageBox.Show(owner, msg,
-                    AppInfo.ProductName, MessageBoxButton.YesNo, MessageBoxImage.Information);
-                if (answer != MessageBoxResult.Yes) return;
-
-                try
-                {
-                    var proc = await UpdateChecker.DownloadAndLaunchInstallerAsync(info);
-                    if (proc != null)
-                    {
-                        // Installer will replace files; exit so it can.
-                        Shutdown();
-                    }
-                    else
-                    {
-                        // No installer asset on this release — point the
-                        // user at the release page as a fallback.
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = info.HtmlUrl,
-                            UseShellExecute = true,
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(owner,
-                        "Could not download the update: " + ex.Message,
-                        AppInfo.ProductName, MessageBoxButton.OK, MessageBoxImage.Error);
-                }
+                if (_hud == null) return;
+                _hud.ShowUpdateAvailable(info.Version, () => _ = RunInstallAsync(info));
             });
         }
         catch
@@ -116,6 +84,37 @@ public partial class App : Application
             // Already caught inside UpdateChecker; outer guard so a
             // surprise (e.g. dispatcher disposed on shutdown) does not
             // crash the process.
+        }
+    }
+
+    private async Task RunInstallAsync(UpdateChecker.ReleaseInfo info)
+    {
+        try
+        {
+            var proc = await UpdateChecker.DownloadAndLaunchInstallerAsync(info);
+            if (proc != null)
+            {
+                // Installer will replace files; exit so it can.
+                Dispatcher.Invoke(Shutdown);
+                return;
+            }
+
+            // No installer asset — fall back to opening the release
+            // page in the browser so the user can download manually.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = info.HtmlUrl,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                MessageBox.Show(_hud ?? (Window)MainWindow,
+                    "Could not download the update: " + ex.Message,
+                    AppInfo.ProductName, MessageBoxButton.OK, MessageBoxImage.Error);
+            });
         }
     }
 

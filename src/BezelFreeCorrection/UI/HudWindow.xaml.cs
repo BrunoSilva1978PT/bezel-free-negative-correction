@@ -40,16 +40,6 @@ public partial class HudWindow : Window
             RefreshGallery();
         };
         KeyDown += (_, e) => InputRouter.HandleKey(_state, e);
-
-        // WPF sometimes drops a topmost window behind another topmost or
-        // fullscreen window when focus moves. Flipping Topmost off then on
-        // forces the window manager to re-stack this one at the top of
-        // the always-on-top band. Cheap and reliable.
-        Deactivated += (_, _) =>
-        {
-            Topmost = false;
-            Topmost = true;
-        };
     }
 
     protected override void OnClosed(System.EventArgs e)
@@ -324,6 +314,27 @@ public partial class HudWindow : Window
     private void HeaderBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ButtonState == MouseButtonState.Pressed) DragMove();
+    }
+
+    // Set by App.CheckForUpdatesAsync once the GitHub poll returns a
+    // newer release. When set, clicking the update banner kicks off
+    // download + silent install via the action the App layer supplied.
+    private Action? _updateAction;
+
+    public void ShowUpdateAvailable(string newVersion, Action onInstallClicked)
+    {
+        _updateAction = onInstallClicked;
+        UpdateBarText.Text =
+            $"Update v{newVersion} is available — click here to install";
+        UpdateBar.Visibility = Visibility.Visible;
+    }
+
+    private void UpdateBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var action = _updateAction;
+        if (action == null) return;
+        UpdateBarText.Text = "Downloading and installing…";
+        action();
     }
 
     private void SelectLeft(object sender, MouseButtonEventArgs e) => _state.Active = JunctionSide.Left;
