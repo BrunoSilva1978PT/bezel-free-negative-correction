@@ -32,7 +32,11 @@ public partial class HudWindow : Window
         _state.Left.PropertyChanged += OnStateChanged;
         _state.Right.PropertyChanged += OnStateChanged;
 
-        Loaded += (_, _) => Refresh();
+        Loaded += (_, _) =>
+        {
+            Refresh();
+            RefreshGallery();
+        };
         KeyDown += (_, e) => InputRouter.HandleKey(_state, e);
 
         // WPF sometimes drops a topmost window behind another topmost or
@@ -75,6 +79,11 @@ public partial class HudWindow : Window
             ResLabel.Text = string.Join(" · ", t.Displays.Select(d => $"{(int)d.Bounds.Width}×{(int)d.Bounds.Height}"));
             OutLabel.Text = $"{t.Displays.Count} files";
         }
+
+        var target = WallpaperGenerator.TargetCanvas(_state);
+        TargetLabel.Text = target.Width > 0
+            ? $"{target.Width} × {target.Height}"
+            : "— pick 3 monitors —";
 
         LeftOvl.Text = FormatNeg(_state.Left.Overlap);
         LeftVo.Text = _state.Left.VOffset + " px";
@@ -246,6 +255,30 @@ public partial class HudWindow : Window
     private Style OverlayButtonStyle(bool active) =>
         (Style)FindResource(active ? "PrimaryButton" : typeof(Button));
 
+    // Flat square button template, used by the gallery × button so the
+    // glyph is fully visible and the hover state signals "destructive".
+    private static ControlTemplate BuildFlatButtonTemplate()
+    {
+        var template = new ControlTemplate(typeof(Button));
+        var border = new FrameworkElementFactory(typeof(Border), "Bd");
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(3));
+
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(content);
+        template.VisualTree = border;
+
+        var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty,
+            new SolidColorBrush(Color.FromRgb(0xB8, 0x2D, 0x2D)), "Bd"));
+        template.Triggers.Add(hoverTrigger);
+        return template;
+    }
+
     private void RefreshWallpaperSection()
     {
         var path = _state.SourceWallpaperPath;
@@ -264,7 +297,19 @@ public partial class HudWindow : Window
             bmp.UriSource = new Uri(path);
             bmp.CacheOption = BitmapCacheOption.OnLoad;
             bmp.EndInit();
-            WallpaperMeta.Text = $"{bmp.PixelWidth} × {bmp.PixelHeight}";
+
+            var target = WallpaperGenerator.TargetCanvas(_state);
+            if (target.Width > 0 &&
+                (bmp.PixelWidth != target.Width || bmp.PixelHeight != target.Height))
+            {
+                WallpaperMeta.Text =
+                    $"{bmp.PixelWidth} × {bmp.PixelHeight} " +
+                    $"→ cover-fit to {target.Width} × {target.Height}";
+            }
+            else
+            {
+                WallpaperMeta.Text = $"{bmp.PixelWidth} × {bmp.PixelHeight}";
+            }
         }
         catch
         {
@@ -307,26 +352,213 @@ public partial class HudWindow : Window
     {
         if (string.IsNullOrEmpty(_state.SourceWallpaperPath))
         {
-            MessageBox.Show(this, "Pick a source wallpaper first.",
-                "Wallpaper Bezel Free Correction", MessageBoxButton.OK, MessageBoxImage.Information);
+            ApplyStatus.Text = "Pick a source wallpaper first.";
+            ApplyStatus.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B));
             return;
         }
 
         try
         {
-            var outDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WallpaperBezelFreeCorrection",
-                "output");
+            var entry = WallpaperGenerator.Generate(_state);
+            DesktopWallpaper.Apply(entry);
+            RefreshGallery();
+            ApplyStatus.Foreground = new SolidColorBrush(Color.FromRgb(0x4A, 0xDE, 0x80));
+            ApplyStatus.Text =
+                $"✓ Applied at {DateTime.Now:HH:mm:ss}  ({entry.Topology}, {entry.Files.Count} file(s))";
+        }
+        catch (Exception ex)
+        {
+            ApplyStatus.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B));
+            ApplyStatus.Text = "Apply failed: " + ex.Message;
+        }
+    }
 
-            var results = WallpaperGenerator.Generate(_state, outDir);
-            DesktopWallpaper.Apply(
-                results.Select(r => (r.Display, r.FilePath)).ToList());
+    // Rebuilds the GALLERY strip from disk. Called on HUD load and after
+    // each Apply. Newest entry appears on the left; empty state shows a
+    // hint instead of the scroll view.
+    private void RefreshGallery()
+    {
+        GalleryList.Children.Clear();
+        var entries = GalleryStore.List();
+        if (entries.Count == 0)
+        {
+            GalleryEmpty.Visibility = Visibility.Visible;
+            GalleryHint.Visibility = Visibility.Collapsed;
+            GalleryScroll.Visibility = Visibility.Collapsed;
+            return;
+        }
+        GalleryEmpty.Visibility = Visibility.Collapsed;
+        GalleryHint.Visibility = Visibility.Visible;
+        GalleryScroll.Visibility = Visibility.Visible;
+        foreach (var entry in entries)
+        {
+            GalleryList.Children.Add(BuildGalleryTile(entry));
+        }
+    }
 
-            MessageBox.Show(this,
-                $"Applied {results.Count} file(s) from:\n{outDir}",
+    private FrameworkElement BuildGalleryTile(GalleryEntry entry)
+    {
+        var thumbPath = entry.FolderPath != null
+            ? System.IO.Path.Combine(entry.FolderPath, GalleryStore.ThumbFile)
+            : string.Empty;
+
+        var thumb = new System.Windows.Controls.Image
+        {
+            Width = 120,
+            Height = 28,
+            Stretch = Stretch.UniformToFill,
+        };
+        if (!string.IsNullOrEmpty(thumbPath) && System.IO.File.Exists(thumbPath))
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri(thumbPath);
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            bmp.Freeze();
+            thumb.Source = bmp;
+        }
+
+        var nameLabel = new TextBlock
+        {
+            Text = entry.DisplayName,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xE8, 0xEC)),
+            FontSize = 10,
+            MaxWidth = 120,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        var dateLabel = new TextBlock
+        {
+            Text = entry.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x8F, 0x99)),
+            FontSize = 9,
+        };
+
+        // Small pill badge colour-coded by topology so the user can tell
+        // Surround entries from Separate ones at a glance.
+        var isSurround = string.Equals(entry.Topology, "Surround", StringComparison.OrdinalIgnoreCase);
+        var badge = new Border
+        {
+            Background = new SolidColorBrush(isSurround
+                ? Color.FromRgb(0x1D, 0x3E, 0x2C)
+                : Color.FromRgb(0x1F, 0x3A, 0x5C)),
+            CornerRadius = new CornerRadius(2),
+            Padding = new Thickness(4, 1, 4, 1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 3, 0, 0),
+            Child = new TextBlock
+            {
+                Text = isSurround ? "SURROUND" : "SEPARATE",
+                Foreground = new SolidColorBrush(isSurround
+                    ? Color.FromRgb(0x7F, 0xE4, 0xA5)
+                    : Color.FromRgb(0xBF, 0xDC, 0xFF)),
+                FontSize = 9,
+                FontWeight = FontWeights.Bold,
+            },
+        };
+
+        var content = new StackPanel();
+        content.Children.Add(thumb);
+        content.Children.Add(nameLabel);
+        content.Children.Add(dateLabel);
+        content.Children.Add(badge);
+
+        // Dedicated delete button, positioned top-right of the tile so
+        // it's obvious at a glance. Template is set to null so the
+        // per-button colours below are the only thing that paints it —
+        // the inherited Button template was eating the × glyph visually.
+        var deleteBtn = new Button
+        {
+            Content = "✕",
+            Width = 24,
+            Height = 24,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 2, 2, 0),
+            Background = new SolidColorBrush(Color.FromRgb(0x8A, 0x1F, 0x1F)),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x8A, 0x8A)),
+            BorderThickness = new Thickness(1),
+            FontSize = 13,
+            FontWeight = FontWeights.Bold,
+            Padding = new Thickness(0),
+            ToolTip = "Delete this entry and clear the wallpaper on its monitors",
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Template = BuildFlatButtonTemplate(),
+        };
+        deleteBtn.Click += (_, _) =>
+        {
+            var answer = MessageBox.Show(this,
+                $"Delete '{entry.DisplayName}' and clear it from the desktop?",
                 "Wallpaper Bezel Free Correction",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes) return;
+
+            try
+            {
+                DesktopWallpaper.ClearForEntry(entry);
+            }
+            catch (Exception)
+            {
+                // Desktop clearing is best-effort; still proceed to delete
+                // the files even if Windows refused to reset the wallpaper.
+            }
+            GalleryStore.Delete(entry);
+            RefreshGallery();
+        };
+
+        var grid = new Grid();
+        grid.Children.Add(content);
+        grid.Children.Add(deleteBtn);
+
+        var border = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x21, 0x29)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x31, 0x3A)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(4),
+            Margin = new Thickness(0, 0, 6, 0),
+            Width = 132,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Child = grid,
+            ToolTip = $"{entry.DisplayName}\n{entry.Topology}\n" +
+                      "Click: load these settings back into the HUD for editing\n" +
+                      "× button (top-right): delete this entry",
+        };
+        border.MouseLeftButtonDown += (_, args) =>
+        {
+            // Walk up the visual tree from the clicked element to check
+            // whether the click came from inside the delete button. If it
+            // did, leave the load alone so deleting never also loads.
+            var src = args.OriginalSource as DependencyObject;
+            while (src != null)
+            {
+                if (ReferenceEquals(src, deleteBtn)) return;
+                src = System.Windows.Media.VisualTreeHelper.GetParent(src);
+            }
+            LoadEntryIntoState(entry);
+        };
+        return border;
+    }
+
+    // Brings a gallery entry's settings back into the live state so the
+    // user can tweak them and press Apply to regenerate. The saved PNGs
+    // themselves are not pushed to the desktop here — that only happens
+    // when Apply is clicked. This matches the usual workflow: pick a
+    // previous calibration, adjust, re-apply.
+    private void LoadEntryIntoState(GalleryEntry entry)
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(entry.SourcePath) && System.IO.File.Exists(entry.SourcePath))
+                _state.SourceWallpaperPath = entry.SourcePath;
+
+            _state.Left.Overlap = entry.LeftOverlap;
+            _state.Right.Overlap = entry.RightOverlap;
+            _state.Left.VOffset = entry.LeftVOffset;
+            _state.Right.VOffset = entry.RightVOffset;
         }
         catch (Exception ex)
         {

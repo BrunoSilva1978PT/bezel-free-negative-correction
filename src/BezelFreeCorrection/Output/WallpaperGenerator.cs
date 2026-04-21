@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using BezelFreeCorrection.Calibration;
 using BezelFreeCorrection.Topology;
@@ -11,32 +13,105 @@ namespace BezelFreeCorrection.Output;
 // Bakes the active calibration into one or more PNG files ready to be set
 // as Windows wallpapers. For Surround the span is one Windows monitor, so
 // a single PNG is produced. For Separate each physical monitor owns its
-// own PNG sized to that monitor's native resolution.
+// own PNG sized to that monitor's native resolution. Every run writes to
+// its own time-stamped subfolder plus a meta.json so the HUD gallery can
+// list and re-apply previous results without regenerating them.
 public static class WallpaperGenerator
 {
-    public readonly record struct Output(Display Display, string FilePath);
+    private const int ThumbWidth = 240;
 
-    public static IReadOnlyList<Output> Generate(CalibrationState state, string outputDirectory)
+    // Total canvas the user's wallpaper is expected to fill. For Surround
+    // the span IS the canvas. For Separate the canvas is the sum of the
+    // three chosen monitor widths by the tallest chosen height. Computed
+    // in a single place so HUD hints and render scaling stay consistent.
+    public static (int Width, int Height) TargetCanvas(CalibrationState state)
+    {
+        var topology = state.Topology;
+        if (topology.Kind == TopologyKind.Surround)
+        {
+            if (topology.Displays.Count == 0) return (0, 0);
+            var span = topology.Displays[0];
+            return ((int)Math.Round(span.Bounds.Width), (int)Math.Round(span.Bounds.Height));
+        }
+        if (state.MonitorCount != 3) return (0, 0);
+        var chosen = Enumerable.Range(0, 3)
+            .Select(pos => state.Positions[pos])
+            .Where(idx => idx >= 0 && idx < topology.Displays.Count)
+            .Select(idx => topology.Displays[idx])
+            .ToList();
+        if (chosen.Count != 3) return (0, 0);
+        var totalW = (int)Math.Round(chosen.Sum(d => d.Bounds.Width));
+        var totalH = (int)Math.Round(chosen.Max(d => d.Bounds.Height));
+        return (totalW, totalH);
+    }
+
+    public static GalleryEntry Generate(CalibrationState state)
     {
         if (string.IsNullOrEmpty(state.SourceWallpaperPath))
             throw new InvalidOperationException("No source wallpaper selected.");
 
-        Directory.CreateDirectory(outputDirectory);
+        // If the current state already matches an existing entry (same
+        // source + topology + bezel values), drop the older one so the
+        // gallery doesn't pile up duplicates when the user re-applies
+        // a loaded entry without changes.
+        var topologyLabel = state.Topology.Kind == TopologyKind.Surround ? "Surround" : "Separate";
+        var duplicate = GalleryStore.List().FirstOrDefault(e =>
+            e.SourcePath == state.SourceWallpaperPath
+            && e.Topology == topologyLabel
+            && e.LeftOverlap == state.Left.Overlap
+            && e.RightOverlap == state.Right.Overlap
+            && e.LeftVOffset == state.Left.VOffset
+            && e.RightVOffset == state.Right.VOffset);
+        if (duplicate != null)
+            GalleryStore.Delete(duplicate);
 
-        var source = LoadBgra32(state.SourceWallpaperPath);
-        return state.Topology.Kind == TopologyKind.Surround
-            ? GenerateSurround(state, source, outputDirectory)
-            : GenerateSeparate(state, source, outputDirectory);
+        var id = GalleryStore.NewEntryId();
+        var folder = GalleryStore.EntryFolder(id);
+        Directory.CreateDirectory(folder);
+
+        // Pre-scale the source to the target canvas so the per-pixel loop
+        // below samples 1:1 regardless of what the user fed in. This also
+        // means a source with the wrong aspect ratio gets centre-cropped
+        // to preserve its aspect instead of non-uniformly stretched, which
+        // is what was producing the weird "crop + bad division" symptom
+        // on non-Surround rigs whose monitor widths didn't sum exactly to
+        // the source wallpaper width.
+        var target = TargetCanvas(state);
+        var source = LoadAndFitToTarget(state.SourceWallpaperPath, target.Width, target.Height);
+
+        var entry = new GalleryEntry
+        {
+            Id = id,
+            SourcePath = state.SourceWallpaperPath,
+            DisplayName = Path.GetFileNameWithoutExtension(state.SourceWallpaperPath) ?? id,
+            CreatedUtc = DateTime.UtcNow,
+            Topology = state.Topology.Kind == TopologyKind.Surround ? "Surround" : "Separate",
+            LeftOverlap = state.Left.Overlap,
+            RightOverlap = state.Right.Overlap,
+            LeftVOffset = state.Left.VOffset,
+            RightVOffset = state.Right.VOffset,
+            FolderPath = folder,
+        };
+
+        if (state.Topology.Kind == TopologyKind.Surround)
+            GenerateSurround(state, source, folder, entry);
+        else
+            GenerateSeparate(state, source, folder, entry);
+
+        WriteThumbnail(entry);
+        GalleryStore.SaveMeta(entry);
+        return entry;
     }
 
     // A single output image matching the full Surround span. All three
     // panels are composited side by side into it using the same slice
     // geometry the preview uses, so what ships as wallpaper matches what
     // the user calibrated on screen.
-    private static IReadOnlyList<Output> GenerateSurround(
+    private static void GenerateSurround(
         CalibrationState state,
         SourceImage source,
-        string outputDirectory)
+        string folder,
+        GalleryEntry entry)
     {
         var topology = state.Topology;
         var spanDisplay = topology.Displays[0];
@@ -95,25 +170,42 @@ public static class WallpaperGenerator
             }
         }
 
-        var outPath = Path.Combine(outputDirectory, "surround.png");
-        SavePng(output, spanW, spanH, outPath);
-        return new[] { new Output(spanDisplay, outPath) };
+        const string fileName = "surround.png";
+        SavePng(output, spanW, spanH, Path.Combine(folder, fileName));
+        entry.Files.Add(new GalleryFile
+        {
+            Role = "surround",
+            FileName = fileName,
+            BoundsX = spanDisplay.Bounds.X,
+            BoundsY = spanDisplay.Bounds.Y,
+            BoundsWidth = spanDisplay.Bounds.Width,
+            BoundsHeight = spanDisplay.Bounds.Height,
+        });
     }
 
     // One output image per chosen monitor. The wallpaper is conceptually
     // a continuous panorama covering the sum of the three monitor widths;
     // each monitor crops out its own slice with the per-junction shifts
     // baked in.
-    private static IReadOnlyList<Output> GenerateSeparate(
+    private static void GenerateSeparate(
         CalibrationState state,
         SourceImage source,
-        string outputDirectory)
+        string folder,
+        GalleryEntry entry)
     {
         if (state.MonitorCount != 3)
             throw new InvalidOperationException(
                 "Separate mode requires exactly 3 monitors to be picked before Apply.");
 
         var topology = state.Topology;
+        for (var pos = 0; pos < 3; pos++)
+        {
+            var idx = state.Positions[pos];
+            if (idx < 0 || idx >= topology.Displays.Count)
+                throw new InvalidOperationException(
+                    "One of the three monitor roles (Left / Centre / Right) is unassigned. " +
+                    "Click a monitor tile in the HUD's MONITORS section to assign it.");
+        }
         var chosen = Enumerable.Range(0, 3)
             .Select(pos => topology.Displays[state.Positions[pos]])
             .ToList();
@@ -121,7 +213,6 @@ public static class WallpaperGenerator
         var totalW = (int)Math.Round(chosen.Sum(d => d.Bounds.Width));
         var totalH = (int)Math.Round(chosen.Max(d => d.Bounds.Height));
 
-        var results = new List<Output>();
         int offsetX = 0;
         for (var position = 0; position < 3; position++)
         {
@@ -140,21 +231,35 @@ public static class WallpaperGenerator
                 virtualCanvasW: totalW, virtualCanvasH: totalH,
                 xShift, yShift);
 
-            var outPath = Path.Combine(outputDirectory, PositionFileName(position));
-            SavePng(output, monW, monH, outPath);
-            results.Add(new Output(display, outPath));
+            var fileName = RoleFileName(position);
+            SavePng(output, monW, monH, Path.Combine(folder, fileName));
+            entry.Files.Add(new GalleryFile
+            {
+                Role = RoleName(position),
+                FileName = fileName,
+                BoundsX = display.Bounds.X,
+                BoundsY = display.Bounds.Y,
+                BoundsWidth = display.Bounds.Width,
+                BoundsHeight = display.Bounds.Height,
+            });
             offsetX += monW;
         }
-
-        return results;
     }
 
-    private static string PositionFileName(int position) => position switch
+    private static string RoleFileName(int position) => position switch
     {
         CalibrationState.LeftPosition => "left.png",
         CalibrationState.CenterPosition => "center.png",
         CalibrationState.RightPosition => "right.png",
         _ => $"monitor{position}.png",
+    };
+
+    private static string RoleName(int position) => position switch
+    {
+        CalibrationState.LeftPosition => "left",
+        CalibrationState.CenterPosition => "center",
+        CalibrationState.RightPosition => "right",
+        _ => $"monitor{position}",
     };
 
     // Core sampling loop: every destination pixel is mapped back to a
@@ -212,6 +317,53 @@ public static class WallpaperGenerator
         }
     }
 
+    // Produces a small thumbnail that represents what the user will see
+    // on their monitors: a horizontal composite of all output files.
+    // Stored at thumb.png next to the full-resolution PNGs.
+    private static void WriteThumbnail(GalleryEntry entry)
+    {
+        if (entry.FolderPath == null) return;
+        var sources = new List<BitmapSource>();
+        foreach (var f in entry.Files.OrderBy(f => f.Role switch
+                 {
+                     "left" => 0, "surround" => 1, "center" => 1, "right" => 2, _ => 3,
+                 }))
+        {
+            var path = Path.Combine(entry.FolderPath, f.FileName);
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri(path);
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.DecodePixelWidth = ThumbWidth;
+            bmp.EndInit();
+            bmp.Freeze();
+            sources.Add(bmp);
+        }
+        if (sources.Count == 0) return;
+
+        // Compose side by side at a uniform height proportional to the
+        // tallest panel, then re-encode as a single PNG.
+        var maxH = sources.Max(s => s.PixelHeight);
+        var totalW = sources.Sum(s => s.PixelWidth);
+        var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap(
+            totalW, maxH, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        var dv = new System.Windows.Media.DrawingVisual();
+        using (var ctx = dv.RenderOpen())
+        {
+            double x = 0;
+            foreach (var src in sources)
+            {
+                ctx.DrawImage(src, new System.Windows.Rect(x, 0, src.PixelWidth, src.PixelHeight));
+                x += src.PixelWidth;
+            }
+        }
+        rtb.Render(dv);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(rtb));
+        using var stream = File.Create(Path.Combine(entry.FolderPath, GalleryStore.ThumbFile));
+        encoder.Save(stream);
+    }
+
     private sealed class SourceImage
     {
         public byte[] Pixels { get; init; } = Array.Empty<byte>();
@@ -220,7 +372,12 @@ public static class WallpaperGenerator
         public int Stride => Width * 4;
     }
 
-    private static SourceImage LoadBgra32(string path)
+    // Loads the wallpaper and, only when needed, re-renders it to exactly
+    // (targetW, targetH) using a cover fit. If the source already matches
+    // the target dimensions, the pixels are copied directly — no rescale
+    // round-trip, no chance of a RenderTargetBitmap quirk eating the
+    // content. Cover fit preserves aspect when rescaling is required.
+    private static SourceImage LoadAndFitToTarget(string path, int targetW, int targetH)
     {
         var bmp = new BitmapImage();
         bmp.BeginInit();
@@ -229,15 +386,47 @@ public static class WallpaperGenerator
         bmp.EndInit();
         bmp.Freeze();
 
-        var converted = new FormatConvertedBitmap(
-            bmp, System.Windows.Media.PixelFormats.Bgra32, null, 0);
-        var w = converted.PixelWidth;
-        var h = converted.PixelHeight;
-        var stride = w * 4;
-        var pixels = new byte[h * stride];
-        converted.CopyPixels(pixels, stride, 0);
+        var srcW = bmp.PixelWidth;
+        var srcH = bmp.PixelHeight;
+        if (targetW <= 0 || targetH <= 0)
+        {
+            targetW = srcW;
+            targetH = srcH;
+        }
 
-        return new SourceImage { Pixels = pixels, Width = w, Height = h };
+        // Fast path: exact match. Decode straight into Bgra32 without
+        // going through a RenderTargetBitmap (whose behaviour on giant
+        // opaque images has bit us before).
+        if (srcW == targetW && srcH == targetH)
+        {
+            var direct = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
+            var stride = targetW * 4;
+            var pixels = new byte[targetH * stride];
+            direct.CopyPixels(pixels, stride, 0);
+            return new SourceImage { Pixels = pixels, Width = targetW, Height = targetH };
+        }
+
+        var scale = Math.Max((double)targetW / srcW, (double)targetH / srcH);
+        var scaledW = srcW * scale;
+        var scaledH = srcH * scale;
+        var offsetX = (targetW - scaledW) / 2.0;
+        var offsetY = (targetH - scaledH) / 2.0;
+
+        var rtb = new RenderTargetBitmap(targetW, targetH, 96, 96, PixelFormats.Pbgra32);
+        var dv = new DrawingVisual();
+        RenderOptions.SetBitmapScalingMode(dv, BitmapScalingMode.Fant);
+        using (var ctx = dv.RenderOpen())
+        {
+            ctx.DrawRectangle(Brushes.Black, null, new Rect(0, 0, targetW, targetH));
+            ctx.DrawImage(bmp, new Rect(offsetX, offsetY, scaledW, scaledH));
+        }
+        rtb.Render(dv);
+
+        var converted = new FormatConvertedBitmap(rtb, PixelFormats.Bgra32, null, 0);
+        var stride2 = targetW * 4;
+        var pixels2 = new byte[targetH * stride2];
+        converted.CopyPixels(pixels2, stride2, 0);
+        return new SourceImage { Pixels = pixels2, Width = targetW, Height = targetH };
     }
 
     private static void SavePng(byte[] pixels, int width, int height, string path)

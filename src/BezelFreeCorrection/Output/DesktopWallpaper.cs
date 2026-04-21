@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows;
-using BezelFreeCorrection.Topology;
 
 namespace BezelFreeCorrection.Output;
 
@@ -12,28 +11,63 @@ namespace BezelFreeCorrection.Output;
 // images per display on multi-monitor setups.
 public static class DesktopWallpaper
 {
-    // Apply the per-display assignments produced by WallpaperGenerator.
-    // Each entry pairs a Display (as we detected it) with the PNG file
-    // that should appear on it. The Display's bounds are matched to the
-    // COM-side monitor device path by rectangle, which works for both
-    // Surround (one logical monitor) and Separate setups.
-    public static void Apply(IReadOnlyList<(Display Display, string FilePath)> assignments)
+    // Apply a gallery entry's PNG files to the current desktop, matching
+    // each file to the live COM monitor by rectangular bounds. Works for
+    // both Surround (one file → span) and Separate (three files →
+    // individual monitors). Re-applying an older entry only succeeds
+    // when the monitor layout still matches the bounds recorded in the
+    // entry — we surface that mismatch with a clear error.
+    public static void Apply(GalleryEntry entry)
     {
         var dw = (IDesktopWallpaper)new DesktopWallpaperClass();
         try
         {
-            // Fill so the generated bitmap covers the target monitor 1:1
-            // without re-scaling; we already emitted at the exact pixel
-            // dimensions so Fill behaves as identity.
             dw.SetPosition(DesktopWallpaperPosition.Fill);
 
             var monitors = Enumerate(dw);
-            foreach (var (display, filePath) in assignments)
+            foreach (var file in entry.Files)
             {
-                var id = MatchMonitorId(monitors, display.Bounds)
+                var bounds = new Rect(file.BoundsX, file.BoundsY, file.BoundsWidth, file.BoundsHeight);
+                var id = MatchMonitorId(monitors, bounds)
                     ?? throw new InvalidOperationException(
-                        $"No COM monitor path matches display '{display.DeviceName}' with bounds {display.Bounds}.");
+                        $"No active monitor matches the layout this entry was saved with "
+                        + $"(role '{file.Role}', bounds {bounds}).");
+                var filePath = GalleryStore.FullFilePath(entry, file);
                 dw.SetWallpaper(id, filePath);
+            }
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(dw);
+        }
+    }
+
+    // Clear the wallpaper on any monitor that currently matches one of
+    // the bounds stored in a gallery entry. Used when the user deletes an
+    // entry — Windows falls back to the background colour (black by
+    // default) so the user sees the wallpaper "go away" on the matching
+    // screens instead of lingering after the files are removed.
+    public static void ClearForEntry(GalleryEntry entry)
+    {
+        var dw = (IDesktopWallpaper)new DesktopWallpaperClass();
+        try
+        {
+            dw.SetBackgroundColor(0); // RGB(0,0,0)
+            var monitors = Enumerate(dw);
+            foreach (var file in entry.Files)
+            {
+                var bounds = new Rect(file.BoundsX, file.BoundsY, file.BoundsWidth, file.BoundsHeight);
+                var id = MatchMonitorId(monitors, bounds);
+                if (id == null) continue;
+                try
+                {
+                    dw.SetWallpaper(id, string.Empty);
+                }
+                catch (COMException)
+                {
+                    // Not every driver accepts an empty string; ignore
+                    // and move on rather than block the delete.
+                }
             }
         }
         finally

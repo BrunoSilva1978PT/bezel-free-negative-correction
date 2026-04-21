@@ -108,6 +108,14 @@
                     <TextBlock Text="Output files" Foreground="#E6E8EC"/>
                     <TextBlock Grid.Column="1" x:Name="OutLabel" Foreground="#E6E8EC"/>
                 </Grid>
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Recommended wallpaper" Foreground="#E6E8EC"/>
+                    <TextBlock Grid.Column="1" x:Name="TargetLabel" Foreground="#4ADE80" FontWeight="SemiBold"/>
+                </Grid>
             </StackPanel>
 
             <Border Height="1" Background="#23262D"/>
@@ -211,6 +219,27 @@
             <Border Height="1" Background="#23262D"/>
 
             <StackPanel Margin="12,10">
+                <TextBlock Text="GALLERY" Style="{StaticResource SectionLabel}"/>
+                <TextBlock x:Name="GalleryEmpty" Foreground="#8A8F99" FontSize="10"
+                           TextWrapping="Wrap" Margin="0,6,0,0"
+                           Text="No saved wallpapers yet. Click Apply to save the current calibration."/>
+                <TextBlock x:Name="GalleryHint" Foreground="#8A8F99" FontSize="10"
+                           TextWrapping="Wrap" Margin="0,6,0,0"
+                           Visibility="Collapsed"
+                           Text="Click a tile to load its settings back into the HUD for editing, then press Apply."/>
+                <ScrollViewer x:Name="GalleryScroll"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled"
+                              MaxHeight="110"
+                              Margin="0,6,0,0"
+                              Visibility="Collapsed">
+                    <StackPanel x:Name="GalleryList" Orientation="Horizontal"/>
+                </ScrollViewer>
+            </StackPanel>
+
+            <Border Height="1" Background="#23262D"/>
+
+            <StackPanel Margin="12,10">
                 <TextBlock Text="KEYS" Style="{StaticResource SectionLabel}"/>
                 <Grid Margin="0,6,0,0">
                     <Grid.ColumnDefinitions>
@@ -254,11 +283,15 @@
 
             <Border Height="1" Background="#23262D"/>
 
-            <StackPanel Orientation="Horizontal" Margin="12,10">
-                <Button Content="Reset" Width="90" Margin="0,0,6,0" Click="Reset_Click"/>
-                <Button Content="Cancel" Width="90" Margin="0,0,6,0" Click="Close_Click"/>
-                <Button Content="Apply" Width="90" Style="{StaticResource PrimaryButton}"
-                        Click="Apply_Click"/>
+            <StackPanel Margin="12,10">
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Reset" Width="90" Margin="0,0,6,0" Click="Reset_Click"/>
+                    <Button Content="Cancel" Width="90" Margin="0,0,6,0" Click="Close_Click"/>
+                    <Button Content="Apply" Width="90" Style="{StaticResource PrimaryButton}"
+                            Click="Apply_Click"/>
+                </StackPanel>
+                <TextBlock x:Name="ApplyStatus" Foreground="#4ADE80" FontSize="10"
+                           Margin="0,6,0,0" TextWrapping="Wrap"/>
             </StackPanel>
         </StackPanel>
     </Border>

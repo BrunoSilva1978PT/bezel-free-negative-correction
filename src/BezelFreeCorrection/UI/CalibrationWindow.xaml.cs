@@ -360,14 +360,22 @@ public partial class CalibrationWindow : Window
 
     private (double width, double height) ComputeAssumedCanvas()
     {
+        // Use the same canvas the generator commits to disk so the on-
+        // screen preview lines up 1:1 with the Apply output. Summing ALL
+        // topology.Displays here was the bug: on rigs with more than
+        // three monitors (a six-monitor sim) the preview stretched the
+        // wallpaper across the entire desktop width instead of just the
+        // three roles the user picked, so each chosen monitor appeared
+        // to show only a tiny compressed slice of the image.
+        var target = Output.WallpaperGenerator.TargetCanvas(_state);
+        if (target.Width > 0 && target.Height > 0)
+            return (target.Width, target.Height);
+
+        // Fallback if roles aren't assigned yet — keep the preview drawable
+        // by using the whole desktop so the slice isn't zero-sized.
         var t = _state.Topology;
-        if (t.Kind == TopologyKind.Surround && t.Displays.Count > 0)
-        {
-            var d = t.Displays[0];
-            return (d.Bounds.Width, d.Bounds.Height);
-        }
         var width = t.Displays.Sum(d => d.Bounds.Width);
-        var height = t.Displays.Max(d => d.Bounds.Height);
+        var height = t.Displays.Count > 0 ? t.Displays.Max(d => d.Bounds.Height) : 1;
         return (width, height);
     }
 
