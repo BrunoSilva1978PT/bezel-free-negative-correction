@@ -1,0 +1,11 @@
+<Window x:Class="BezelFreeCorrection.UI.CalibrationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        Background="Black"
+        Topmost="True"
+        ShowInTaskbar="False"
+        Focusable="True">
+    <Canvas x:Name="Root" ClipToBounds="True" Background="Black"/>
+</Window>

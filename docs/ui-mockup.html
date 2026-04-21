@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Bezel-Free Negative Correction — UI Mockup</title>
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --panel: rgba(18, 20, 26, 0.92);
+    --panel-border: #2a2d36;
+    --accent: #4ea1ff;
+    --accent-dim: #1f3a5c;
+    --warn: #ff6b6b;
+    --ok: #4ade80;
+    --text: #e6e8ec;
+    --text-dim: #8a8f99;
+    --chip: #1e2129;
+    --chip-active: #2d4a74;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #111;
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+  }
+  body { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Top toolbar (meta-controls, not part of the real app fullscreen) */
+  .meta-bar {
+    background: #16181d;
+    border-bottom: 1px solid #23262d;
+    padding: 6px 12px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .meta-bar strong { color: var(--text); }
+  .meta-bar label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .meta-bar select, .meta-bar button {
+    background: #23262d; color: var(--text);
+    border: 1px solid #2d313a; border-radius: 4px;
+    padding: 3px 8px; font-size: 12px;
+    cursor: pointer;
+  }
+  .meta-bar .spacer { flex: 1; }
+
+  /* Fullscreen simulated desktop */
+  .desktop {
+    flex: 1;
+    position: relative;
+    background: #000;
+    overflow: hidden;
+  }
+
+  /* The three-monitor canvas (simulates 5760x1080 proportionally) */
+  .monitors {
+    position: absolute;
+    inset: 0;
+    display: flex;
+  }
+  .monitor {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    border-right: 2px solid #000;
+  }
+  .monitor:last-child { border-right: none; }
+  .monitor .label {
+    position: absolute;
+    top: 8px; left: 10px;
+    font-size: 10px; color: rgba(255,255,255,0.25);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+
+  /* Test pattern layers */
+  .pattern-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  /* Horizontal lines pattern — crosses the vertical seams, reveals discontinuity */
+  .pattern-hlines {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.0) 0px,
+      rgba(255,255,255,0.0) 59px,
+      rgba(255,255,255,0.35) 59px,
+      rgba(255,255,255,0.35) 60px
+    );
+  }
+  /* Diagonals */
+  .pattern-diag {
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.18) 0 1px, transparent 1px 50px),
+      repeating-linear-gradient(-45deg, rgba(255,255,255,0.18) 0 1px, transparent 1px 50px);
+  }
+  /* Wallpaper preview (simulated photo) */
+  .pattern-wall {
+    background:
+      radial-gradient(ellipse at 30% 40%, #3b5278 0%, transparent 60%),
+      radial-gradient(ellipse at 70% 60%, #6b4a7a 0%, transparent 55%),
+      linear-gradient(180deg, #1a2033 0%, #0e1320 100%);
+  }
+
+  /* Junction calibration markers */
+  .junction-marker {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    pointer-events: none;
+    opacity: 0.9;
+  }
+  .junction-marker.active {
+    background: var(--warn);
+    box-shadow: 0 0 10px var(--warn);
+  }
+  .junction-marker .tag {
+    position: absolute;
+    top: 50%; transform: translateY(-50%);
+    background: rgba(0,0,0,0.6);
+    color: var(--text);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    left: 8px;
+  }
+  .junction-marker.right-side .tag { left: auto; right: 8px; }
+
+  /* Overlap bands (visual representation of negative bezel) */
+  .overlap-band {
+    position: absolute;
+    top: 0; bottom: 0;
+    background: rgba(255, 107, 107, 0.12);
+    border-left: 1px dashed rgba(255,107,107,0.5);
+    border-right: 1px dashed rgba(255,107,107,0.5);
+    pointer-events: none;
+  }
+
+  /* HUD Panel */
+  .hud {
+    position: absolute;
+    width: 340px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+    user-select: none;
+    font-size: 12px;
+    overflow: hidden;
+  }
+  .hud.hidden { display: none; }
+
+  .hud-header {
+    background: #1a1d24;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: grab;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .hud-header:active { cursor: grabbing; }
+  .hud-header .title {
+    flex: 1;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .hud-header .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ok);
+  }
+  .hud-header .btn-close {
+    background: transparent; border: none;
+    color: var(--text-dim); font-size: 14px;
+    cursor: pointer; padding: 0 4px;
+  }
+  .hud-header .btn-close:hover { color: var(--text); }
+
+  .hud-section {
+    padding: 10px 12px;
+    border-bottom: 1px solid #23262d;
+  }
+  .hud-section:last-child { border-bottom: none; }
+  .hud-section h4 {
+    margin: 0 0 8px 0;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .topology-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px;
+  }
+  .topology-row .value { color: var(--ok); font-weight: 600; }
+
+  /* Junction row */
+  .junction {
+    padding: 8px;
+    border-radius: 6px;
+    background: var(--chip);
+    margin-bottom: 6px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: border-color 0.1s;
+  }
+  .junction:last-child { margin-bottom: 0; }
+  .junction.active {
+    border-color: var(--warn);
+    background: #2a1e1e;
+  }
+  .junction .head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px;
+  }
+  .junction .name { font-weight: 600; }
+  .junction .kbd { font-size: 10px; color: var(--text-dim); }
+  .junction .values {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  }
+  .junction .val {
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .junction .val label {
+    font-size: 10px; color: var(--text-dim);
+  }
+  .junction .val .num {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .junction .val .num.nz { color: var(--accent); }
+
+  /* Chip selector (patterns) */
+  .chips {
+    display: flex; gap: 4px; flex-wrap: wrap;
+  }
+  .chip {
+    background: var(--chip);
+    border: 1px solid #2d313a;
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .chip.active {
+    background: var(--chip-active);
+    border-color: var(--accent);
+  }
+
+  /* Toggle */
+  .toggle-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 0;
+  }
+  .toggle {
+    position: relative;
+    width: 32px; height: 18px;
+    background: #2a2d36; border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .toggle::after {
+    content: ""; position: absolute;
+    top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    background: #bcc2cc;
+    border-radius: 50%;
+    transition: left 0.15s, background 0.15s;
+  }
+  .toggle.on { background: var(--accent-dim); }
+  .toggle.on::after { left: 16px; background: var(--accent); }
+
+  /* File picker row */
+  .file-row {
+    display: flex; gap: 8px; align-items: flex-start;
+  }
+  .file-preview {
+    width: 56px; height: 32px;
+    background: #1a1d24;
+    border: 1px dashed #2d313a;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    background-size: cover; background-position: center;
+  }
+  .file-preview.has-file {
+    border-style: solid;
+    background: linear-gradient(135deg, #3b5278 0%, #6b4a7a 100%);
+  }
+  .file-name {
+    font-size: 11px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file-meta {
+    font-size: 10px; color: var(--text-dim); margin-top: 2px;
+  }
+  .file-meta.warn { color: var(--warn); }
+  .mini-btn {
+    background: #23262d;
+    border: 1px solid #2d313a;
+    color: var(--text);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .mini-btn:hover { background: #2d313a; }
+
+  /* Action bar */
+  .actions {
+    display: flex; gap: 6px;
+  }
+  .actions button {
+    flex: 1;
+    background: #23262d;
+    border: 1px solid #2d313a;
+    color: var(--text);
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .actions button.primary {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #bfdcff;
+  }
+  .actions button:hover { background: #2d313a; }
+
+  /* Hotkey hints at bottom of screen */
+  .keybar {
+    position: absolute;
+    bottom: 12px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.55);
+    border: 1px solid #23262d;
+    border-radius: 6px;
+    padding: 6px 12px;
+    display: flex;
+    gap: 14px;
+    font-size: 11px;
+    color: var(--text-dim);
+    backdrop-filter: blur(8px);
+  }
+  .keybar .k { color: var(--text); }
+  .kbd {
+    display: inline-block;
+    background: #1a1d24;
+    border: 1px solid #2d313a;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  /* Settings popover */
+  .settings {
+    position: absolute;
+    top: 46px; right: 12px;
+    width: 280px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 12px;
+    display: none;
+    z-index: 10;
+  }
+  .settings.open { display: block; }
+  .settings h4 {
+    margin: 0 0 8px 0; font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.1em;
+  }
+  .settings-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px;
+  }
+  .capture-key {
+    background: #23262d; border: 1px solid #2d313a;
+    color: var(--text); padding: 3px 10px; border-radius: 4px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    cursor: pointer;
+    min-width: 60px; text-align: center;
+  }
+  .capture-key.capturing { border-color: var(--warn); color: var(--warn); }
+</style>
+</head>
+<body>
+
+<div class="meta-bar">
+  <strong>UI Mockup</strong>
+  <span style="color:#555;">|</span>
+  <label>Topology:
+    <select id="topology">
+      <option value="surround">NVIDIA Surround ON (1 logical display)</option>
+      <option value="separate">Surround OFF (3 independent displays)</option>
+    </select>
+  </label>
+  <label>HUD:
+    <button id="toggleHud">Hide (H)</button>
+  </label>
+  <label>Settings:
+    <button id="toggleSettings">⚙</button>
+  </label>
+  <div class="spacer"></div>
+  <span style="color:#555;">Drag the HUD to move it · Click a junction to activate · Use ← → to change values</span>
+</div>
+
+<div class="desktop" id="desktop">
+
+  <div class="monitors" id="monitors">
+    <div class="monitor">
+      <div class="label">Monitor 1 — Left</div>
+      <div class="pattern-layer pattern-hlines" data-pattern="hlines"></div>
+    </div>
+    <div class="monitor">
+      <div class="label">Monitor 2 — Center</div>
+      <div class="pattern-layer pattern-hlines" data-pattern="hlines"></div>
+    </div>
+    <div class="monitor">
+      <div class="label">Monitor 3 — Right</div>
+      <div class="pattern-layer pattern-hlines" data-pattern="hlines"></div>
+    </div>
+  </div>
+
+  <!-- Junction markers (positioned by JS) -->
+  <div class="junction-marker" id="mark-left"><div class="tag">Left junction · <span id="tag-left">-12 px</span></div></div>
+  <div class="junction-marker right-side" id="mark-right"><div class="tag">Right junction · <span id="tag-right">-8 px</span></div></div>
+
+  <!-- Overlap bands -->
+  <div class="overlap-band" id="band-left"></div>
+  <div class="overlap-band" id="band-right"></div>
+
+  <!-- HUD -->
+  <div class="hud" id="hud" style="left: 40%; top: 18%;">
+    <div class="hud-header" id="hudHeader">
+      <span class="dot"></span>
+      <span class="title">Bezel Correction</span>
+      <button class="btn-close" id="hudClose">×</button>
+    </div>
+
+    <div class="hud-section">
+      <h4>Topology <span style="font-weight:400; text-transform:none; letter-spacing:0; color:var(--text-dim);">· auto-detected</span></h4>
+      <div class="topology-row">
+        <span>Display mode</span>
+        <span class="value" id="topoLabel">NVIDIA Surround</span>
+      </div>
+      <div class="topology-row">
+        <span>Resolution</span>
+        <span style="color:var(--text);" id="resLabel">5760 × 1080</span>
+      </div>
+      <div class="topology-row">
+        <span>Output files</span>
+        <span style="color:var(--text);" id="outLabel">1 file</span>
+      </div>
+    </div>
+
+    <div class="hud-section">
+      <h4>Source wallpaper</h4>
+      <div class="file-row">
+        <div class="file-preview" id="filePreview">
+          <span style="color:var(--text-dim); font-size:10px;">no file</span>
+        </div>
+        <div style="flex:1; min-width:0;">
+          <div class="file-name" id="fileName">panorama_5760x1080.jpg</div>
+          <div class="file-meta" id="fileMeta">5760 × 1080 · JPEG · matches layout</div>
+          <div style="margin-top:6px; display:flex; gap:4px;">
+            <button class="mini-btn" id="btnPickFile">Choose…</button>
+            <button class="mini-btn" id="btnClearFile">Clear</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-section">
+      <h4>Junctions <span style="font-weight:400; text-transform:none; letter-spacing:0;">· <span class="kbd">Tab</span> to cycle</span></h4>
+
+      <div class="junction active" data-junction="left">
+        <div class="head">
+          <span class="name">← Left</span>
+          <span class="kbd">active</span>
+        </div>
+        <div class="values">
+          <div class="val">
+            <label>Bezel correction</label>
+            <span class="num nz" id="v-left-ovl">-12 px</span>
+          </div>
+          <div class="val">
+            <label>V. offset</label>
+            <span class="num" id="v-left-vo">0 px</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="junction" data-junction="right">
+        <div class="head">
+          <span class="name">Right →</span>
+          <span class="kbd">—</span>
+        </div>
+        <div class="values">
+          <div class="val">
+            <label>Bezel correction</label>
+            <span class="num nz" id="v-right-ovl">-8 px</span>
+          </div>
+          <div class="val">
+            <label>V. offset</label>
+            <span class="num" id="v-right-vo">-2 px</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-section">
+      <h4>Test pattern <span style="font-weight:400; text-transform:none; letter-spacing:0;">· <span class="kbd">P</span></span></h4>
+      <div class="chips" id="patternChips">
+        <div class="chip active" data-p="hlines">Horizontal lines</div>
+        <div class="chip" data-p="diag">Diagonals</div>
+        <div class="chip" data-p="wall">Wallpaper</div>
+      </div>
+    </div>
+
+    <div class="hud-section">
+      <div class="actions">
+        <button id="btnReset">Reset</button>
+        <button id="btnCancel">Cancel</button>
+        <button class="primary" id="btnApply">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom keybar -->
+  <div class="keybar">
+    <span><span class="kbd">Tab</span> <span class="k">cycle junction</span></span>
+    <span><span class="kbd">←</span> <span class="kbd">→</span> <span class="k">correction ±1px</span></span>
+    <span><span class="kbd">Shift</span>+<span class="kbd">←→</span> <span class="k">±10px</span></span>
+    <span><span class="kbd">↑</span> <span class="kbd">↓</span> <span class="k">v-offset</span></span>
+    <span><span class="kbd">P</span> <span class="k">pattern</span></span>
+    <span><span class="kbd" id="hudKeyLabel">H</span> <span class="k">hide HUD</span></span>
+    <span><span class="kbd">Enter</span> <span class="k">apply</span></span>
+    <span><span class="kbd">Esc</span> <span class="k">cancel</span></span>
+  </div>
+
+  <!-- Settings popover -->
+  <div class="settings" id="settings">
+    <h4>Settings</h4>
+    <div class="settings-row">
+      <span>HUD toggle hotkey</span>
+      <button class="capture-key" id="hudKeyBtn">H</button>
+    </div>
+    <div class="settings-row">
+      <span>Step size (Shift multiplier)</span>
+      <input type="number" value="10" min="2" max="50" style="width:60px;background:#23262d;color:var(--text);border:1px solid #2d313a;border-radius:4px;padding:2px 6px;" />
+    </div>
+    <div class="settings-row">
+      <span>Remember HUD position</span>
+      <div class="toggle on" id="rememberPos"></div>
+    </div>
+    <div style="color:var(--text-dim); font-size:11px; margin-top:8px;">
+      The HUD can be dragged anywhere. Its position is remembered per-monitor layout.
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* --- State --- */
+const state = {
+  topology: "surround",
+  activeJunction: "left",
+  pattern: "hlines",
+  hudVisible: true,
+  hudKey: "H",
+  values: {
+    left:  { overlap: 12, vOffset: 0 },
+    right: { overlap: 8,  vOffset: -2 },
+  },
+  sourceFile: {
+    name: "panorama_5760x1080.jpg",
+    width: 5760, height: 1080, type: "JPEG", loaded: true,
+  },
+};
+
+/* --- Render helpers --- */
+const $ = (id) => document.getElementById(id);
+
+function renderJunctionMarkers() {
+  const desktop = $("desktop");
+  const w = desktop.clientWidth;
+  // Junctions at 1/3 and 2/3 of the total width (3-monitor setup)
+  const leftX = w / 3;
+  const rightX = (2 * w) / 3;
+
+  $("mark-left").style.left = leftX + "px";
+  $("mark-right").style.left = rightX + "px";
+
+  // Overlap bands — scaled for visibility (real overlap is tiny in pixel terms)
+  const ovlScale = 2.2; // visual exaggeration for mockup
+  const lOvl = state.values.left.overlap * ovlScale;
+  const rOvl = state.values.right.overlap * ovlScale;
+
+  $("band-left").style.left = (leftX - lOvl) + "px";
+  $("band-left").style.width = (2 * lOvl) + "px";
+  $("band-right").style.left = (rightX - rOvl) + "px";
+  $("band-right").style.width = (2 * rOvl) + "px";
+
+  $("tag-left").textContent  = "-" + state.values.left.overlap  + " px";
+  $("tag-right").textContent = "-" + state.values.right.overlap + " px";
+
+  $("mark-left").classList.toggle("active", state.activeJunction === "left");
+  $("mark-right").classList.toggle("active", state.activeJunction === "right");
+}
+
+function renderHudValues() {
+  const fmtNeg = (v) => (v === 0 ? "0 px" : "-" + v + " px");
+  $("v-left-ovl").textContent  = fmtNeg(state.values.left.overlap);
+  $("v-left-vo").textContent   = state.values.left.vOffset  + " px";
+  $("v-right-ovl").textContent = fmtNeg(state.values.right.overlap);
+  $("v-right-vo").textContent  = state.values.right.vOffset + " px";
+
+  $("v-left-ovl").classList.toggle("nz", state.values.left.overlap !== 0);
+  $("v-right-ovl").classList.toggle("nz", state.values.right.overlap !== 0);
+
+  document.querySelectorAll(".junction").forEach(el => {
+    el.classList.toggle("active", el.dataset.junction === state.activeJunction);
+    const kbd = el.querySelector(".kbd");
+    kbd.textContent = (el.dataset.junction === state.activeJunction) ? "active" : "—";
+  });
+}
+
+function renderPattern() {
+  document.querySelectorAll(".pattern-layer").forEach(el => {
+    el.style.display = (el.dataset.pattern === state.pattern) ? "" : "none";
+  });
+  document.querySelectorAll(".chip").forEach(c => {
+    c.classList.toggle("active", c.dataset.p === state.pattern);
+  });
+}
+
+function renderTopology() {
+  if (state.topology === "surround") {
+    $("topoLabel").textContent = "NVIDIA Surround";
+    $("topoLabel").style.color = "var(--ok)";
+    $("resLabel").textContent = "5760 × 1080 (logical)";
+    $("outLabel").textContent = "1 file";
+  } else {
+    $("topoLabel").textContent = "3 separate displays";
+    $("topoLabel").style.color = "var(--accent)";
+    $("resLabel").textContent = "3× 1920 × 1080";
+    $("outLabel").textContent = "3 files (one per monitor)";
+  }
+}
+
+function renderSourceFile() {
+  const sf = state.sourceFile;
+  const preview = $("filePreview");
+  if (sf && sf.loaded) {
+    preview.classList.add("has-file");
+    preview.textContent = "";
+    $("fileName").textContent = sf.name;
+    const expectedW = state.topology === "surround" ? 5760 : 5760;
+    const expectedH = 1080;
+    const matches = sf.width === expectedW && sf.height === expectedH;
+    $("fileMeta").textContent =
+      `${sf.width} × ${sf.height} · ${sf.type} · ${matches ? "matches layout" : "will be resized"}`;
+    $("fileMeta").classList.toggle("warn", !matches);
+  } else {
+    preview.classList.remove("has-file");
+    preview.innerHTML = '<span style="color:var(--text-dim); font-size:10px;">no file</span>';
+    $("fileName").textContent = "No wallpaper chosen";
+    $("fileMeta").textContent = "Pick a panoramic image (spans all monitors)";
+    $("fileMeta").classList.remove("warn");
+  }
+}
+
+function renderHudVisibility() {
+  $("hud").classList.toggle("hidden", !state.hudVisible);
+  $("toggleHud").textContent = state.hudVisible
+    ? `Hide (${state.hudKey})` : `Show (${state.hudKey})`;
+  $("hudKeyLabel").textContent = state.hudKey;
+}
+
+function renderAll() {
+  renderJunctionMarkers();
+  renderHudValues();
+  renderPattern();
+  renderTopology();
+  renderSourceFile();
+  renderHudVisibility();
+}
+
+/* --- Inject the other patterns dynamically --- */
+(function injectPatternLayers() {
+  document.querySelectorAll(".monitor").forEach(m => {
+    ["diag","wall"].forEach(p => {
+      const d = document.createElement("div");
+      d.className = "pattern-layer pattern-" + p;
+      d.dataset.pattern = p;
+      d.style.display = "none";
+      m.appendChild(d);
+    });
+  });
+})();
+
+/* --- Events --- */
+$("topology").addEventListener("change", e => {
+  state.topology = e.target.value;
+  renderAll();
+});
+
+$("toggleHud").addEventListener("click", () => {
+  state.hudVisible = !state.hudVisible;
+  renderHudVisibility();
+});
+
+$("hudClose").addEventListener("click", () => {
+  state.hudVisible = false;
+  renderHudVisibility();
+});
+
+$("toggleSettings").addEventListener("click", () => {
+  $("settings").classList.toggle("open");
+});
+
+document.querySelectorAll(".junction").forEach(j => {
+  j.addEventListener("click", () => {
+    state.activeJunction = j.dataset.junction;
+    renderAll();
+  });
+});
+
+document.querySelectorAll(".chip").forEach(c => {
+  c.addEventListener("click", () => {
+    state.pattern = c.dataset.p;
+    renderAll();
+  });
+});
+
+$("btnPickFile").addEventListener("click", () => {
+  // Mock: cycle through a few fake files
+  const samples = [
+    { name: "panorama_5760x1080.jpg", width: 5760, height: 1080, type: "JPEG", loaded: true },
+    { name: "sunset_wide.png",        width: 7680, height: 1440, type: "PNG",  loaded: true },
+    { name: "mountains_4k.jpg",       width: 3840, height: 1080, type: "JPEG", loaded: true },
+  ];
+  const i = samples.findIndex(s => s.name === state.sourceFile?.name);
+  state.sourceFile = samples[(i + 1) % samples.length];
+  renderSourceFile();
+});
+
+$("btnClearFile").addEventListener("click", () => {
+  state.sourceFile = null;
+  renderSourceFile();
+});
+
+$("btnReset").addEventListener("click", () => {
+  state.values = { left: {overlap:0,vOffset:0}, right:{overlap:0,vOffset:0} };
+  renderAll();
+});
+
+/* --- Keyboard --- */
+document.addEventListener("keydown", e => {
+  const active = state.values[state.activeJunction];
+  const step = e.shiftKey ? 10 : 1;
+  let handled = true;
+
+  switch (e.key.toLowerCase()) {
+    case "tab":
+      state.activeJunction = state.activeJunction === "left" ? "right" : "left";
+      e.preventDefault();
+      break;
+    case "arrowleft":  active.overlap = Math.max(0, active.overlap - step); break;
+    case "arrowright": active.overlap = active.overlap + step; break;
+    case "arrowup":    active.vOffset = active.vOffset + step; break;
+    case "arrowdown":  active.vOffset = active.vOffset - step; break;
+    case "p": {
+      const order = ["hlines","diag","wall"];
+      state.pattern = order[(order.indexOf(state.pattern)+1) % order.length];
+      break;
+    }
+    case state.hudKey.toLowerCase():
+      state.hudVisible = !state.hudVisible; break;
+    default: handled = false;
+  }
+  if (handled) { e.preventDefault(); renderAll(); }
+});
+
+/* --- HUD dragging --- */
+(function makeDraggable() {
+  const hud = $("hud");
+  const header = $("hudHeader");
+  let dragging = false, dx = 0, dy = 0;
+  header.addEventListener("mousedown", e => {
+    dragging = true;
+    const r = hud.getBoundingClientRect();
+    dx = e.clientX - r.left;
+    dy = e.clientY - r.top;
+  });
+  window.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    hud.style.left = (e.clientX - dx) + "px";
+    hud.style.top  = (e.clientY - dy) + "px";
+  });
+  window.addEventListener("mouseup", () => dragging = false);
+})();
+
+/* --- Hotkey capture for HUD toggle --- */
+(function hotkeyCapture() {
+  const btn = $("hudKeyBtn");
+  let capturing = false;
+  btn.addEventListener("click", () => {
+    capturing = true;
+    btn.classList.add("capturing");
+    btn.textContent = "…";
+  });
+  window.addEventListener("keydown", e => {
+    if (!capturing) return;
+    if (e.key === "Escape") { capturing = false; btn.classList.remove("capturing"); btn.textContent = state.hudKey; return; }
+    if (e.key.length === 1 && /[a-zA-Z0-9]/.test(e.key)) {
+      state.hudKey = e.key.toUpperCase();
+      btn.textContent = state.hudKey;
+      btn.classList.remove("capturing");
+      capturing = false;
+      renderHudVisibility();
+      e.preventDefault();
+    }
+  }, true);
+})();
+
+window.addEventListener("resize", renderJunctionMarkers);
+renderAll();
+</script>
+
+</body>
+</html>
