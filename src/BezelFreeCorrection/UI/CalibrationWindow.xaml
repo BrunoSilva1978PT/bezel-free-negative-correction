@@ -4,7 +4,6 @@
         WindowStyle="None"
         ResizeMode="NoResize"
         Background="Black"
-        Topmost="True"
         ShowInTaskbar="False"
         Focusable="True">
     <Canvas x:Name="Root" ClipToBounds="True" Background="Black"/>

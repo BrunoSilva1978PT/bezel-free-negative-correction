@@ -69,3 +69,6 @@ $RECYCLE.BIN/
 
 # Claude workspace (local only)
 .claude/
+
+# Vendored SDKs (re-clone locally, do not version)
+third_party/

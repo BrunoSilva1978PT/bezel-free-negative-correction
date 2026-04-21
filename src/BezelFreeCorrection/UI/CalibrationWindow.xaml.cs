@@ -86,16 +86,35 @@ public partial class CalibrationWindow : Window
 
         if (t.Kind == TopologyKind.Surround)
         {
-            var monitorCount = t.JunctionXs.Count + 1;
-            if (monitorCount < 1) monitorCount = 1;
-            var sliceWidth = ActualWidth / monitorCount;
-            for (var i = 0; i < monitorCount; i++)
+            // Prefer exact per-panel bounds reported by NVAPI. Without the
+            // Mosaic layout we fall back to an equal-width split which only
+            // matches reality when all physical panels have the same size.
+            if (t.Mosaic != null && t.Mosaic.Panels.Count > 0)
             {
-                _slices.Add(new Slice
+                var topRow = t.Mosaic.Panels.Where(p => p.Row == 0).OrderBy(p => p.Column).ToList();
+                for (var i = 0; i < topRow.Count; i++)
                 {
-                    MonitorIndex = i,
-                    Bounds = new Rect(i * sliceWidth, 0, sliceWidth, ActualHeight),
-                });
+                    var b = topRow[i].BoundsInSpan;
+                    _slices.Add(new Slice
+                    {
+                        MonitorIndex = i,
+                        Bounds = new Rect(b.X, 0, b.Width, ActualHeight),
+                    });
+                }
+            }
+            else
+            {
+                var monitorCount = t.JunctionXs.Count + 1;
+                if (monitorCount < 1) monitorCount = 1;
+                var sliceWidth = ActualWidth / monitorCount;
+                for (var i = 0; i < monitorCount; i++)
+                {
+                    _slices.Add(new Slice
+                    {
+                        MonitorIndex = i,
+                        Bounds = new Rect(i * sliceWidth, 0, sliceWidth, ActualHeight),
+                    });
+                }
             }
         }
         else
@@ -221,18 +240,14 @@ public partial class CalibrationWindow : Window
     {
         slice.Host.Children.Clear();
 
-        switch (_state.Pattern)
-        {
-            case TestPattern.HorizontalLines:
-                DrawHorizontalLines(slice, xShift, yShift);
-                break;
-            case TestPattern.Diagonals:
-                DrawDiagonals(slice, xShift, yShift);
-                break;
-            case TestPattern.Wallpaper:
-                DrawWallpaper(slice, xShift, yShift);
-                break;
-        }
+        // Wallpaper — or its gradient fallback if none is loaded — is the
+        // permanent base layer. Any calibration overlay is drawn on top so
+        // the user can toggle between guides without losing the preview of
+        // the real wallpaper.
+        DrawWallpaper(slice, xShift, yShift);
+
+        if (_state.Pattern == TestPattern.HorizontalLines)
+            DrawHorizontalLines(slice, xShift, yShift);
     }
 
     private static void DrawHorizontalLines(Slice slice, double xShift, double yShift)
@@ -257,60 +272,10 @@ public partial class CalibrationWindow : Window
         _ = xShift; // horizontal lines are uniform across X; shift is intentionally unused
     }
 
-    private static void DrawDiagonals(Slice slice, double xShift, double yShift)
-    {
-        const double step = 50.0;
-        var w = slice.Bounds.Width;
-        var h = slice.Bounds.Height;
-
-        // Forward slash lines: y = x + c, tiled every `step` in c, origin shifted by (xShift, yShift).
-        var biasFwd = (yShift - xShift) % step;
-        if (biasFwd > 0) biasFwd -= step;
-        for (var c = -w - step + biasFwd; c <= h + step; c += step)
-        {
-            slice.Host.Children.Add(new Line
-            {
-                X1 = 0,
-                Y1 = c,
-                X2 = w,
-                Y2 = c + w,
-                Stroke = PatternBrush,
-                StrokeThickness = 1,
-            });
-        }
-
-        // Back slash lines: y = -x + c.
-        var biasBack = (yShift + xShift) % step;
-        if (biasBack > 0) biasBack -= step;
-        for (var c = -step + biasBack; c <= w + h + step; c += step)
-        {
-            slice.Host.Children.Add(new Line
-            {
-                X1 = 0,
-                Y1 = c,
-                X2 = w,
-                Y2 = c - w,
-                Stroke = PatternBrush,
-                StrokeThickness = 1,
-            });
-        }
-    }
-
     private void DrawWallpaper(Slice slice, double xShift, double yShift)
     {
         var path = _state.SourceWallpaperPath;
-        if (string.IsNullOrEmpty(path))
-        {
-            slice.Host.Children.Add(new Rectangle
-            {
-                Width = slice.Bounds.Width,
-                Height = slice.Bounds.Height,
-                Fill = BuildGradientBrush(),
-            });
-            return;
-        }
-
-        var bmp = LoadWallpaper(path);
+        BitmapImage? bmp = string.IsNullOrEmpty(path) ? null : LoadWallpaper(path);
         if (bmp is null)
         {
             slice.Host.Children.Add(new Rectangle
@@ -322,31 +287,51 @@ public partial class CalibrationWindow : Window
             return;
         }
 
-        // Compute the total assumed canvas width/height across all physical monitors
-        // so we can slice the source image per-monitor position.
-        var (totalW, totalH) = ComputeAssumedCanvas();
         var position = _state.GetPositionForMonitor(slice.MonitorIndex);
+        slice.Host.Children.Add(BuildWallpaperContent(slice, bmp, position, xShift, yShift));
+    }
+
+    // Scales the wallpaper to span the full multi-monitor desktop, then
+    // positions it so each slice samples its own portion. VOffset is
+    // covered by stretching the image vertically only when this slice has
+    // a non-zero yShift, avoiding black bars on the shifted slice without
+    // disturbing the centre slice.
+    private FrameworkElement BuildWallpaperContent(
+        Slice slice,
+        BitmapImage bmp,
+        int position,
+        double xShift,
+        double yShift)
+    {
+        var (totalW, _) = ComputeAssumedCanvas();
         var monitorX0 = MonitorOffsetX(position);
-        var monitorW = MonitorWidth(position);
 
-        // Scale: fit the image width to total desktop width, preserving aspect.
-        var scale = totalW / bmp.PixelWidth;
-        var scaledH = bmp.PixelHeight * scale;
+        var scaleW = totalW / bmp.PixelWidth;
+        var neededH = slice.Bounds.Height + 2 * Math.Abs(yShift);
+        var scaleY = Math.Max(scaleW, neededH / bmp.PixelHeight);
 
-        // Image covers the full scaled size; we position it so this monitor's
-        // portion falls into the slice, then apply (xShift, yShift) as the
-        // negative bezel correction.
+        var scaledW = bmp.PixelWidth * scaleW;
+        var scaledH = bmp.PixelHeight * scaleY;
+
         var image = new Image
         {
             Source = bmp,
-            Width = totalW,
+            Width = scaledW,
             Height = scaledH,
             Stretch = Stretch.Fill,
         };
         Canvas.SetLeft(image, -monitorX0 + xShift);
         Canvas.SetTop(image, (slice.Bounds.Height - scaledH) / 2.0 + yShift);
-        slice.Host.Children.Add(image);
-        _ = monitorW;
+
+        var host = new Canvas
+        {
+            Width = slice.Bounds.Width,
+            Height = slice.Bounds.Height,
+            ClipToBounds = true,
+            Background = Brushes.Black,
+        };
+        host.Children.Add(image);
+        return host;
     }
 
     private BitmapImage? LoadWallpaper(string path)
@@ -391,6 +376,12 @@ public partial class CalibrationWindow : Window
         var t = _state.Topology;
         if (t.Kind == TopologyKind.Surround && t.Displays.Count > 0)
         {
+            if (t.Mosaic != null && t.Mosaic.Panels.Count > 0)
+            {
+                var topRow = t.Mosaic.Panels.Where(p => p.Row == 0).OrderBy(p => p.Column).ToList();
+                if (position >= 0 && position < topRow.Count)
+                    return topRow[position].BoundsInSpan.X;
+            }
             return position * t.Displays[0].Bounds.Width / _state.MonitorCount;
         }
         double offset = 0;
@@ -408,6 +399,12 @@ public partial class CalibrationWindow : Window
         var t = _state.Topology;
         if (t.Kind == TopologyKind.Surround && t.Displays.Count > 0)
         {
+            if (t.Mosaic != null && t.Mosaic.Panels.Count > 0)
+            {
+                var topRow = t.Mosaic.Panels.Where(p => p.Row == 0).OrderBy(p => p.Column).ToList();
+                if (position >= 0 && position < topRow.Count)
+                    return topRow[position].BoundsInSpan.Width;
+            }
             return t.Displays[0].Bounds.Width / _state.MonitorCount;
         }
         var natural = _state.Positions[position];
@@ -440,16 +437,39 @@ public partial class CalibrationWindow : Window
         // each window covers one monitor, so the seam falls between windows.
         if (_state.Topology.Kind != TopologyKind.Surround) return;
 
-        var monitorCount = _state.MonitorCount;
-        for (var j = 0; j < monitorCount - 1; j++)
+        var junctionXs = ComputeLocalJunctionXs();
+        for (var j = 0; j < junctionXs.Count; j++)
         {
-            var localX = (j + 1) * ActualWidth / monitorCount;
+            var localX = junctionXs[j];
             var isLeftJunction = j == 0;
             var isActive = (isLeftJunction && _state.Active == JunctionSide.Left) ||
                            (!isLeftJunction && _state.Active == JunctionSide.Right);
             var overlap = isLeftJunction ? _state.Left.Overlap : _state.Right.Overlap;
             AddJunctionVisuals(localX, overlap, isActive);
         }
+    }
+
+    // Window-local X positions of the seams between physical panels. Uses
+    // the real panel boundaries from the Mosaic layout when available so the
+    // overlay marker sits exactly on the bezel, even when panels differ in
+    // width. Falls back to an equal-width split otherwise.
+    private IReadOnlyList<double> ComputeLocalJunctionXs()
+    {
+        var t = _state.Topology;
+        if (t.Mosaic != null && t.Mosaic.Panels.Count > 0)
+        {
+            return t.Mosaic.Panels
+                .Where(p => p.Row == 0 && p.Column < t.Mosaic.Columns - 1)
+                .OrderBy(p => p.Column)
+                .Select(p => p.BoundsInSpan.Right)
+                .ToList();
+        }
+
+        var result = new List<double>();
+        var monitorCount = _state.MonitorCount;
+        for (var j = 0; j < monitorCount - 1; j++)
+            result.Add((j + 1) * ActualWidth / monitorCount);
+        return result;
     }
 
     private void AddJunctionVisuals(double localX, int overlap, bool isActive)

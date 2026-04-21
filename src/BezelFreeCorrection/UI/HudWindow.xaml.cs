@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using BezelFreeCorrection.Calibration;
 using BezelFreeCorrection.Input;
+using BezelFreeCorrection.Output;
 using BezelFreeCorrection.Patterns;
 using BezelFreeCorrection.Topology;
 
@@ -33,6 +34,16 @@ public partial class HudWindow : Window
 
         Loaded += (_, _) => Refresh();
         KeyDown += (_, e) => InputRouter.HandleKey(_state, e);
+
+        // WPF sometimes drops a topmost window behind another topmost or
+        // fullscreen window when focus moves. Flipping Topmost off then on
+        // forces the window manager to re-stack this one at the top of
+        // the always-on-top band. Cheap and reliable.
+        Deactivated += (_, _) =>
+        {
+            Topmost = false;
+            Topmost = true;
+        };
     }
 
     protected override void OnClosed(System.EventArgs e)
@@ -70,16 +81,170 @@ public partial class HudWindow : Window
         RightOvl.Text = FormatNeg(_state.Right.Overlap);
         RightVo.Text = _state.Right.VOffset + " px";
 
+        // Highlight the active overlay button so the user always sees which
+        // guide is currently drawn on top of the wallpaper.
+        PatNone.Style   = OverlayButtonStyle(_state.Pattern == TestPattern.None);
+        PatHLines.Style = OverlayButtonStyle(_state.Pattern == TestPattern.HorizontalLines);
+
         var activeLeft = _state.Active == JunctionSide.Left;
         LeftBadge.Text = activeLeft ? "active" : "—";
         RightBadge.Text = activeLeft ? "—" : "active";
         LeftCard.BorderBrush = activeLeft ? ActiveBorder : Brushes.Transparent;
         RightCard.BorderBrush = activeLeft ? Brushes.Transparent : ActiveBorder;
 
-        Visibility = _state.HudVisible ? Visibility.Visible : Visibility.Hidden;
-
         RefreshWallpaperSection();
+        RefreshMonitorPicker();
     }
+
+    private static readonly Brush PickerLeftFill   = new SolidColorBrush(Color.FromRgb(0x4E, 0xA1, 0xFF));
+    private static readonly Brush PickerCenterFill = new SolidColorBrush(Color.FromRgb(0x4A, 0xDE, 0x80));
+    private static readonly Brush PickerRightFill  = new SolidColorBrush(Color.FromRgb(0xFF, 0xB3, 0x57));
+    private static readonly Brush PickerUnusedFill = new SolidColorBrush(Color.FromRgb(0x2D, 0x31, 0x3A));
+
+    // Builds a Windows-style mini layout of every detected monitor and
+    // hooks up click handlers so the user can cycle Left / Right roles.
+    // The centre is implicit (the primary monitor) and not user-editable.
+    // Hidden entirely in Surround mode where the span is self-assigning.
+    private void RefreshMonitorPicker()
+    {
+        var t = _state.Topology;
+        var showPicker = t.Kind == TopologyKind.Separate && t.Displays.Count > 0;
+
+        MonitorPickerSection.Visibility = showPicker ? Visibility.Visible : Visibility.Collapsed;
+        MonitorPickerSeparator.Visibility = showPicker ? Visibility.Visible : Visibility.Collapsed;
+        MonitorPickerCanvas.Children.Clear();
+
+        if (!showPicker) return;
+
+        // Compute the bounding rect of all monitor rects, then scale so
+        // the widest axis fits inside the canvas with a small margin.
+        var minX = t.Displays.Min(d => d.Bounds.X);
+        var minY = t.Displays.Min(d => d.Bounds.Y);
+        var maxX = t.Displays.Max(d => d.Bounds.Right);
+        var maxY = t.Displays.Max(d => d.Bounds.Bottom);
+        var worldW = Math.Max(1.0, maxX - minX);
+        var worldH = Math.Max(1.0, maxY - minY);
+
+        MonitorPickerCanvas.UpdateLayout();
+        var canvasW = MonitorPickerCanvas.ActualWidth > 0 ? MonitorPickerCanvas.ActualWidth : 316;
+        var canvasH = MonitorPickerCanvas.Height;
+
+        const double margin = 6;
+        var scale = Math.Min(
+            (canvasW - 2 * margin) / worldW,
+            (canvasH - 2 * margin) / worldH);
+        var drawnW = worldW * scale;
+        var drawnH = worldH * scale;
+        var offsetX = (canvasW - drawnW) / 2.0 - minX * scale;
+        var offsetY = (canvasH - drawnH) / 2.0 - minY * scale;
+
+        for (var i = 0; i < t.Displays.Count; i++)
+        {
+            var display = t.Displays[i];
+            var role = _state.GetPositionForMonitor(i);
+            var tile = BuildMonitorTile(display, i, role);
+
+            Canvas.SetLeft(tile, display.Bounds.X * scale + offsetX);
+            Canvas.SetTop(tile, display.Bounds.Y * scale + offsetY);
+            tile.Width = display.Bounds.Width * scale;
+            tile.Height = display.Bounds.Height * scale;
+            MonitorPickerCanvas.Children.Add(tile);
+        }
+    }
+
+    private Border BuildMonitorTile(Topology.Display display, int displayIndex, int role)
+    {
+        var fill = role switch
+        {
+            CalibrationState.LeftPosition => PickerLeftFill,
+            CalibrationState.CenterPosition => PickerCenterFill,
+            CalibrationState.RightPosition => PickerRightFill,
+            _ => PickerUnusedFill,
+        };
+
+        var label = role switch
+        {
+            CalibrationState.LeftPosition => "LEFT",
+            CalibrationState.CenterPosition => "CENTER",
+            CalibrationState.RightPosition => "RIGHT",
+            _ => (displayIndex + 1).ToString(),
+        };
+
+        var primaryBadge = display.IsPrimary
+            ? new TextBlock
+            {
+                Text = "primary",
+                Foreground = new SolidColorBrush(Color.FromArgb(0xBB, 0x10, 0x10, 0x18)),
+                FontSize = 8,
+                FontWeight = FontWeights.Bold,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 2),
+            }
+            : null;
+
+        var roleLabel = new TextBlock
+        {
+            Text = label,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xE0, 0x10, 0x10, 0x18)),
+            FontSize = 11,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+
+        var stack = new Grid();
+        stack.Children.Add(roleLabel);
+        if (primaryBadge != null) stack.Children.Add(primaryBadge);
+
+        var border = new Border
+        {
+            Background = fill,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x0C, 0x0D, 0x12)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            Child = stack,
+            Cursor = display.IsPrimary ? System.Windows.Input.Cursors.Arrow : System.Windows.Input.Cursors.Hand,
+            ToolTip = $"{display.DeviceName}\n{(int)display.Bounds.Width}×{(int)display.Bounds.Height}" +
+                      (display.IsPrimary ? "\n(primary — centre)" : ""),
+        };
+
+        if (!display.IsPrimary)
+        {
+            border.MouseLeftButtonDown += (_, _) => CycleMonitorRole(displayIndex);
+        }
+
+        return border;
+    }
+
+    // Click on a non-primary monitor cycles its role through
+    // Unassigned → Left → Right → Unassigned. The centre stays on the
+    // primary at all times, matching the "assume primary is centre" rule.
+    private void CycleMonitorRole(int displayIndex)
+    {
+        var current = _state.GetPositionForMonitor(displayIndex);
+        var next = current switch
+        {
+            -1 => CalibrationState.LeftPosition,
+            CalibrationState.LeftPosition => CalibrationState.RightPosition,
+            _ => -1,
+        };
+
+        if (next == -1)
+        {
+            // Clear whichever side was holding this monitor; assigning -1
+            // keeps the other side intact because AssignMonitor only drops
+            // duplicates of the incoming index, which is now a sentinel.
+            if (current != -1) _state.AssignMonitor(current, -1);
+        }
+        else
+        {
+            _state.AssignMonitor(next, displayIndex);
+        }
+    }
+
+    private Style OverlayButtonStyle(bool active) =>
+        (Style)FindResource(active ? "PrimaryButton" : typeof(Button));
 
     private void RefreshWallpaperSection()
     {
@@ -116,9 +281,8 @@ public partial class HudWindow : Window
 
     private void SelectLeft(object sender, MouseButtonEventArgs e) => _state.Active = JunctionSide.Left;
     private void SelectRight(object sender, MouseButtonEventArgs e) => _state.Active = JunctionSide.Right;
+    private void SelectPatternNone(object sender, RoutedEventArgs e) => _state.Pattern = TestPattern.None;
     private void SelectPatternHLines(object sender, RoutedEventArgs e) => _state.Pattern = TestPattern.HorizontalLines;
-    private void SelectPatternDiag(object sender, RoutedEventArgs e) => _state.Pattern = TestPattern.Diagonals;
-    private void SelectPatternWall(object sender, RoutedEventArgs e) => _state.Pattern = TestPattern.Wallpaper;
 
     private void Reset_Click(object sender, RoutedEventArgs e) => _state.Reset();
     private void Close_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
@@ -141,7 +305,33 @@ public partial class HudWindow : Window
 
     private void Apply_Click(object sender, RoutedEventArgs e)
     {
-        // Wallpaper generation + IDesktopWallpaper invocation lands in a later iteration.
-        MessageBox.Show(this, "Apply is not implemented yet.", "Bezel Correction", MessageBoxButton.OK);
+        if (string.IsNullOrEmpty(_state.SourceWallpaperPath))
+        {
+            MessageBox.Show(this, "Pick a source wallpaper first.",
+                "Wallpaper Bezel Free Correction", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var outDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WallpaperBezelFreeCorrection",
+                "output");
+
+            var results = WallpaperGenerator.Generate(_state, outDir);
+            DesktopWallpaper.Apply(
+                results.Select(r => (r.Display, r.FilePath)).ToList());
+
+            MessageBox.Show(this,
+                $"Applied {results.Count} file(s) from:\n{outDir}",
+                "Wallpaper Bezel Free Correction",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message,
+                "Wallpaper Bezel Free Correction", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 }

@@ -14,6 +14,13 @@ public static class InputRouter
         var step = (Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? 10 : 1;
         var active = state.ActiveJunction;
 
+        // Arrow keys follow the *outer* monitor's visual direction of travel:
+        // on the left junction the outer monitor is the LEFT panel, which
+        // moves further left as Overlap grows, so ← widens the gap and →
+        // narrows it. On the right junction the outer monitor is the RIGHT
+        // panel, and the mapping flips.
+        var leftWidens = state.Active == JunctionSide.Left;
+
         switch (e.Key)
         {
             case Key.Tab:
@@ -22,12 +29,16 @@ public static class InputRouter
                 break;
 
             case Key.Left:
-                active.Overlap = Math.Max(0, active.Overlap - step);
+                active.Overlap = leftWidens
+                    ? active.Overlap + step
+                    : Math.Max(0, active.Overlap - step);
                 e.Handled = true;
                 break;
 
             case Key.Right:
-                active.Overlap += step;
+                active.Overlap = leftWidens
+                    ? Math.Max(0, active.Overlap - step)
+                    : active.Overlap + step;
                 e.Handled = true;
                 break;
 
@@ -49,14 +60,6 @@ public static class InputRouter
             case Key.Escape:
                 Application.Current.Shutdown();
                 e.Handled = true;
-                break;
-
-            default:
-                if (e.Key == state.HudHotkey)
-                {
-                    state.HudVisible = !state.HudVisible;
-                    e.Handled = true;
-                }
                 break;
         }
     }
