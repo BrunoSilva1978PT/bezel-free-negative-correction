@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using BezelFreeCorrection.Calibration;
@@ -25,9 +26,29 @@ public partial class App : Application
     private HudWindow? _hud;
     private CalibrationState? _state;
 
+    // Named mutex held for the lifetime of the process. The auto-update
+    // installer can race two relaunches at the tail of a silent update
+    // (Restart Manager's restart AND its own [Run] entry); letting a
+    // second instance actually boot meant three fullscreen calibration
+    // windows were fighting for the same monitors and the centre one
+    // was losing. The mutex makes the second instance exit immediately.
+    private Mutex? _singleInstanceMutex;
+    private const string SingleInstanceMutexName =
+        @"Local\WallpaperBezelFreeCorrection.SingleInstance";
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        _singleInstanceMutex = new Mutex(initiallyOwned: true,
+            SingleInstanceMutexName, out var createdNew);
+        if (!createdNew)
+        {
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+            Shutdown();
+            return;
+        }
 
         // Show the splash first thing so the user gets immediate visual
         // feedback even while the heavy start-up work runs on this
@@ -124,6 +145,12 @@ public partial class App : Application
         foreach (var w in _calibrationWindows.Values) w.Close();
         _calibrationWindows.Clear();
         _hud?.Close();
+        if (_singleInstanceMutex != null)
+        {
+            try { _singleInstanceMutex.ReleaseMutex(); } catch { /* already released */ }
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+        }
         base.OnExit(e);
     }
 

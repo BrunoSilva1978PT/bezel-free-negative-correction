@@ -110,12 +110,14 @@ public static class UpdateChecker
         {
             FileName = tempPath,
             // CLOSEAPPLICATIONS asks Restart Manager to close the running
-            // app cleanly so Setup can replace its exe without a reboot,
-            // and RESTARTAPPLICATIONS pairs with the installer's
-            // postinstall Run entry so the new app comes back up under
-            // the original user after Setup finishes.
-            Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART " +
-                        "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS",
+            // app cleanly so Setup can replace its exe without a reboot.
+            // We deliberately do NOT pass RESTARTAPPLICATIONS: Setup's
+            // postinstall Run entry already relaunches the app as the
+            // original user, and pairing the two spawned a second
+            // instance via Restart Manager that was racing the first
+            // for the fullscreen calibration windows (the centre one
+            // kept losing, leaving the centre monitor blank).
+            Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS",
             UseShellExecute = true,
         });
     }
