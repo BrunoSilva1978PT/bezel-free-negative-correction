@@ -76,6 +76,9 @@
                     <Ellipse Width="8" Height="8" Fill="#4ADE80" VerticalAlignment="Center"/>
                     <Button DockPanel.Dock="Right" Content="✕" Width="32" Height="24"
                             Style="{StaticResource CloseButton}" Click="Close_Click"/>
+                    <TextBlock DockPanel.Dock="Right" x:Name="VersionLabel"
+                               VerticalAlignment="Center" Margin="0,0,8,0"
+                               Foreground="#8A8F99" FontSize="10"/>
                     <TextBlock Margin="8,0,0,0" VerticalAlignment="Center"
                                Foreground="#E6E8EC" FontWeight="SemiBold"
                                Text="Wallpaper Bezel Free Correction"/>

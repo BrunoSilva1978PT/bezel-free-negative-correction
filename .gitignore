@@ -72,3 +72,7 @@ $RECYCLE.BIN/
 
 # Vendored SDKs (re-clone locally, do not version)
 third_party/
+
+# Installer build output (release asset, not tracked)
+installer/output/
+publish/

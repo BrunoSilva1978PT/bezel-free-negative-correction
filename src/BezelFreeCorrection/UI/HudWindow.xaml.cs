@@ -28,6 +28,7 @@ public partial class HudWindow : Window
     {
         _state = state;
         InitializeComponent();
+        VersionLabel.Text = $"v{AppInfo.Version}";
 
         _state.PropertyChanged += OnStateChanged;
         _state.Left.PropertyChanged += OnStateChanged;

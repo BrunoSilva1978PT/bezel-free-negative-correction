@@ -1,10 +1,13 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using BezelFreeCorrection.Calibration;
 using BezelFreeCorrection.Topology;
 using BezelFreeCorrection.UI;
+using BezelFreeCorrection.Updates;
 
 namespace BezelFreeCorrection;
 
@@ -26,18 +29,94 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        var topology = DisplayTopology.Detect();
-        _state = new CalibrationState(topology);
-        _state.PropertyChanged += OnStatePropertyChanged;
+        // Show the splash first thing so the user gets immediate visual
+        // feedback even while the heavy start-up work runs on this
+        // thread. Dispatcher.DoEvents-style UpdateLayout forces a paint
+        // before we start blocking on NVAPI / monitor enumeration.
+        var splash = new SplashWindow();
+        splash.Show();
+        splash.UpdateLayout();
 
-        ReconcileCalibrationWindows();
+        try
+        {
+            splash.SetStatus("Detecting displays…");
+            var topology = DisplayTopology.Detect();
+            _state = new CalibrationState(topology);
+            _state.PropertyChanged += OnStatePropertyChanged;
 
-        _hud = new HudWindow(_state);
-        var primary = topology.Primary;
-        _hud.Left = primary.Bounds.X + (primary.Bounds.Width - _hud.Width) / 2.0;
-        _hud.Top = primary.Bounds.Y + 80.0;
-        _hud.Show();
-        _hud.Activate();
+            splash.SetStatus("Opening calibration windows…");
+            ReconcileCalibrationWindows();
+
+            splash.SetStatus("Loading HUD…");
+            _hud = new HudWindow(_state);
+            var primary = topology.Primary;
+            _hud.Left = primary.Bounds.X + (primary.Bounds.Width - _hud.Width) / 2.0;
+            _hud.Top = primary.Bounds.Y + 80.0;
+            _hud.Show();
+            _hud.Activate();
+        }
+        finally
+        {
+            splash.Close();
+        }
+
+        // Background update check. Deliberately fire-and-forget so a
+        // slow or unreachable GitHub API never blocks the HUD.
+        _ = CheckForUpdatesAsync();
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        try
+        {
+            var info = await UpdateChecker.CheckAsync(
+                AppInfo.GitHubOwner, AppInfo.GitHubRepo, AppInfo.Version);
+            if (info == null) return;
+
+            await Dispatcher.InvokeAsync(async () =>
+            {
+                var owner = _hud ?? (Window)MainWindow;
+                var msg =
+                    $"A new version is available: v{info.Version} " +
+                    $"(you have v{AppInfo.Version}).\n\n" +
+                    "Download and install now?";
+                var answer = MessageBox.Show(owner, msg,
+                    AppInfo.ProductName, MessageBoxButton.YesNo, MessageBoxImage.Information);
+                if (answer != MessageBoxResult.Yes) return;
+
+                try
+                {
+                    var proc = await UpdateChecker.DownloadAndLaunchInstallerAsync(info);
+                    if (proc != null)
+                    {
+                        // Installer will replace files; exit so it can.
+                        Shutdown();
+                    }
+                    else
+                    {
+                        // No installer asset on this release — point the
+                        // user at the release page as a fallback.
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = info.HtmlUrl,
+                            UseShellExecute = true,
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(owner,
+                        "Could not download the update: " + ex.Message,
+                        AppInfo.ProductName, MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            });
+        }
+        catch
+        {
+            // Already caught inside UpdateChecker; outer guard so a
+            // surprise (e.g. dispatcher disposed on shutdown) does not
+            // crash the process.
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
