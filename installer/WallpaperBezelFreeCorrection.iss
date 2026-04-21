@@ -16,7 +16,7 @@
 
 #define MyAppName "Wallpaper Bezel Free Correction"
 #define MyAppShortName "WallpaperBezelFreeCorrection"
-#define MyAppVersion "1.0.4"
+#define MyAppVersion "1.0.5"
 #define MyAppPublisher "BrunoSilva1978PT"
 #define MyAppURL "https://github.com/BrunoSilva1978PT/bezel-free-negative-correction"
 #define MyAppExeName "BezelFreeCorrection.exe"

@@ -176,6 +176,14 @@ public partial class CalibrationWindow : Window
         Canvas.SetTop(label, 24);
         slice.Host.Children.Add(label);
 
+        // The centre monitor is pinned to the primary by design — the user
+        // can only reassign the Left and Right roles, so on that slice we
+        // skip the "I am the …" chooser entirely. On the lateral slices
+        // we also drop the CENTER target since accepting it would move
+        // the centre role off the primary monitor, which the rest of the
+        // app does not support.
+        if (position == CalibrationState.CenterPosition) return;
+
         var hint = new TextBlock
         {
             Text = "I am the",
@@ -192,6 +200,7 @@ public partial class CalibrationWindow : Window
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
         for (var p = 0; p < _state.MonitorCount; p++)
         {
+            if (p == CalibrationState.CenterPosition) continue;
             buttons.Children.Add(BuildPositionButton(position, p));
         }
         buttons.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));

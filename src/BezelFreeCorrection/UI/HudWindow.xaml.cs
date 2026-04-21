@@ -224,24 +224,37 @@ public partial class HudWindow : Window
     private void CycleMonitorRole(int displayIndex)
     {
         var current = _state.GetPositionForMonitor(displayIndex);
-        var next = current switch
-        {
-            -1 => CalibrationState.LeftPosition,
-            CalibrationState.LeftPosition => CalibrationState.RightPosition,
-            _ => -1,
-        };
 
-        if (next == -1)
+        // Smart cycle:
+        //   None        → drop into whichever role is empty. Left first
+        //                 when both are free; Right when only Right is
+        //                 free; Left otherwise (it will kick out the
+        //                 previous Left via the dedup inside
+        //                 AssignMonitor, which matches the user's
+        //                 "I want to replace Left" expectation).
+        //   Left → Right (moves, even if Right was already assigned).
+        //   Right → None (frees the slot).
+        var leftIdx  = _state.GetMonitorAtPosition(CalibrationState.LeftPosition);
+        var rightIdx = _state.GetMonitorAtPosition(CalibrationState.RightPosition);
+
+        if (current == CalibrationState.LeftPosition)
         {
-            // Clear whichever side was holding this monitor; assigning -1
-            // keeps the other side intact because AssignMonitor only drops
-            // duplicates of the incoming index, which is now a sentinel.
-            if (current != -1) _state.AssignMonitor(current, -1);
+            _state.AssignMonitor(CalibrationState.RightPosition, displayIndex);
+            return;
         }
-        else
+        if (current == CalibrationState.RightPosition)
         {
-            _state.AssignMonitor(next, displayIndex);
+            _state.AssignMonitor(current, -1);
+            return;
         }
+
+        // current == -1 (monitor is currently unassigned or the centre).
+        var targetRole = leftIdx < 0
+            ? CalibrationState.LeftPosition
+            : rightIdx < 0
+                ? CalibrationState.RightPosition
+                : CalibrationState.LeftPosition;
+        _state.AssignMonitor(targetRole, displayIndex);
     }
 
     private Style OverlayButtonStyle(bool active) =>
