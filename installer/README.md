@@ -60,13 +60,22 @@ Tag, push the tag, then create the release with the installer as a
 release asset (the in-app update checker looks for `*.exe` assets):
 
 ```powershell
-git tag -a v1.0.0 -m "Wallpaper Bezel Free Correction v1.0.0"
-git push origin v1.0.0
-gh release create v1.0.0 `
-    installer/output/WallpaperBezelFreeCorrection-v1.0.0.exe `
-    --title "v1.0.0" `
+git tag -a v1.0.2 -m "Wallpaper Bezel Free Correction v1.0.2"
+git push origin v1.0.2
+gh release create v1.0.2 `
+    installer/output/WallpaperBezelFreeCorrection-v1.0.2.exe `
+    publish/win-x64/BezelFreeCorrection.exe `
+    --title "v1.0.2" `
     --notes-file RELEASE_NOTES.md
 ```
 
-`UpdateChecker.cs` polls `releases/latest` and triggers the
-self-update dialog when the user is on an older version.
+Upload both the installer *and* the raw app executable. The installer
+is the supported install path (runtime detection, shortcuts,
+uninstaller) and is what the in-app update checker downloads; the raw
+exe is kept alongside for portable / manual use, for example by users
+who would rather drop the binary into an existing install folder.
+
+`UpdateChecker.cs` polls `releases/latest`, picks the Wallpaper…
+installer asset and launches it with `/VERYSILENT /SUPPRESSMSGBOXES
+/NORESTART /RESTARTAPPLICATIONS` so updates complete without wizard
+clicks after the single UAC prompt.

@@ -51,18 +51,26 @@ public static class UpdateChecker
             if (string.IsNullOrEmpty(tag)) return null;
             if (!IsNewer(tag, currentVersion)) return null;
 
-            // Prefer a .exe asset (Inno Setup output). Fall back to the
-            // first asset if the installer is named differently on some
-            // release — the update prompt still works, the user just
-            // lands on the generic download.
-            var exeAsset = release.Assets?.FirstOrDefault(a =>
+            // Prefer the Inno Setup installer (name contains
+            // "WallpaperBezelFreeCorrection-v*.exe"). The raw app exe
+            // (BezelFreeCorrection.exe) is also uploaded as a release
+            // asset for manual / portable downloads, but the auto-update
+            // path needs the installer so UAC, Program Files write access
+            // and the .NET runtime check are all handled correctly.
+            var assets = release.Assets ?? Array.Empty<GhAsset>();
+            var installer = assets.FirstOrDefault(a =>
+                (a.Name ?? string.Empty).StartsWith("WallpaperBezelFreeCorrection",
+                    StringComparison.OrdinalIgnoreCase)
+                && (a.Name ?? string.Empty).EndsWith(".exe",
+                    StringComparison.OrdinalIgnoreCase));
+            var anyExe = installer ?? assets.FirstOrDefault(a =>
                 a.Name?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true);
-            var anyAsset = exeAsset ?? release.Assets?.FirstOrDefault();
+            var chosen = anyExe ?? assets.FirstOrDefault();
             return new ReleaseInfo(
                 Version: tag,
                 HtmlUrl: release.HtmlUrl ?? $"https://github.com/{owner}/{repo}/releases/latest",
-                InstallerUrl: anyAsset?.BrowserDownloadUrl,
-                InstallerFileName: anyAsset?.Name);
+                InstallerUrl: chosen?.BrowserDownloadUrl,
+                InstallerFileName: chosen?.Name);
         }
         catch
         {
@@ -72,9 +80,13 @@ public static class UpdateChecker
         }
     }
 
-    // Downloads the installer to %TEMP% and launches it. Returns the
-    // spawned process so the host can exit to let the installer
-    // replace the current build.
+    // Downloads the installer to %TEMP% and launches it in silent mode
+    // so the user does not have to click through the wizard on every
+    // update. Inno's /VERYSILENT drops the UI entirely; SUPPRESSMSGBOXES
+    // auto-accepts confirmation dialogs; NORESTART avoids an unwanted
+    // reboot; RESTARTAPPLICATIONS lets Windows signal apps the installer
+    // needs to replace so they close cleanly instead of failing. UAC
+    // still prompts once because the installer requires admin.
     public static async Task<Process?> DownloadAndLaunchInstallerAsync(
         ReleaseInfo info, CancellationToken cancel = default)
     {
@@ -97,6 +109,7 @@ public static class UpdateChecker
         return Process.Start(new ProcessStartInfo
         {
             FileName = tempPath,
+            Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RESTARTAPPLICATIONS",
             UseShellExecute = true,
         });
     }

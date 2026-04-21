@@ -16,7 +16,7 @@
 
 #define MyAppName "Wallpaper Bezel Free Correction"
 #define MyAppShortName "WallpaperBezelFreeCorrection"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "BrunoSilva1978PT"
 #define MyAppURL "https://github.com/BrunoSilva1978PT/bezel-free-negative-correction"
 #define MyAppExeName "BezelFreeCorrection.exe"
@@ -48,6 +48,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=..\src\BezelFreeCorrection\app.ico
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoProductName={#MyAppName}
